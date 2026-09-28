@@ -17,13 +17,19 @@ H() { printf '{"parentUuid":null,"isSidechain":false,"promptId":"p","type":"user
 T() { printf '{"parentUuid":null,"isSidechain":false,"promptId":"p","type":"user","message":{"role":"user","content":"<task-notification>done</task-notification>"},"uuid":"t","timestamp":"%s","origin":{"kind":"task-notification"}}\n' "$(iso "$1")"; }
 O() { printf '{"parentUuid":null,"isSidechain":false,"type":"user","message":{"role":"user","content":[{"type":"text","text":"hello"}]},"uuid":"o","timestamp":"%s"}\n' "$(iso "$1")"; }
 N() { printf '{"parentUuid":null,"isSidechain":false,"type":"user","message":{"role":"user","content":"<task-notification>done</task-notification>"},"uuid":"n","timestamp":"%s"}\n' "$(iso "$1")"; }
-A() { printf '{"parentUuid":"u","isSidechain":%s,"message":{"model":"%s","id":"m","type":"message","role":"assistant","content":[{"type":"text","text":"hi"}],"usage":{"input_tokens":1}},"requestId":"r","type":"assistant","uuid":"a","timestamp":"%s"}\n' "${2:-false}" "${3:-claude-x}" "$(iso "$1")"; }
+A() { printf '{"parentUuid":"u","isSidechain":%s,"message":{"model":"%s","id":"m","type":"message","role":"assistant","content":[{"type":"text","text":"hi"}],"usage":{"input_tokens":1},"stop_reason":"%s"},"requestId":"r","type":"assistant","uuid":"a","timestamp":"%s"}\n' "${2:-false}" "${3:-claude-x}" "${4:-end_turn}" "$(iso "$1")"; }
 X() { printf '{"parentUuid":null,"isSidechain":false,"type":"user","message":{"role":"user","content":"<cross-session-message>next job</cross-session-message>"},"uuid":"x","timestamp":"%s","origin":{"kind":"peer"}}\n' "$(iso "$1")"; }
 M() { printf '{"type":"frame-link","sessionId":"s","timestamp":"%s"}\n' "$(iso "$1")"; }
 run() {  # run <file> <timeout-seconds>; prints "<exit> <elapsed> <last line>"
   local t0=$(date +%s) out rc
   if [ "$KIND" = sh ]; then out=$(timeout "$2" bash "$D/cache-saver.sh" --file "$1" < /dev/null); rc=$?
   else out=$(timeout "$2" powershell -NoProfile -ExecutionPolicy Bypass -File "$(cygpath -w "$D/cache-saver.ps1")" -File "$(cygpath -w "$1")" < /dev/null); rc=$?; out=$(printf '%s' "$out" | tr -d '\r'); fi
+  echo "$rc $(( $(date +%s) - t0 )) $(printf '%s\n' "$out" | tail -1 | cut -c1-160)"
+}
+runfm() {  # runfm <config-dir> <word> <timeout>
+  local t0=$(date +%s) out rc
+  if [ "$KIND" = sh ]; then out=$(CLAUDE_CONFIG_DIR="$1" timeout "$3" bash "$D/cache-saver.sh" --find-me "$2" < /dev/null); rc=$?
+  else out=$(CLAUDE_CONFIG_DIR="$(cygpath -w "$1")" timeout "$3" powershell -NoProfile -ExecutionPolicy Bypass -File "$(cygpath -w "$D/cache-saver.ps1")" -FindMe "$2" < /dev/null); rc=$?; out=$(printf '%s' "$out" | tr -d '\r'); fi
   echo "$rc $(( $(date +%s) - t0 )) $(printf '%s\n' "$out" | tail -1 | cut -c1-160)"
 }
 pass=0; fail=0
@@ -70,25 +76,44 @@ n=$(date +%s); f=$W/l.jsonl; { H $((n-5000)); A $((n-4990)); H $((n-2)); A $((n-
 check L-user-back "$(run $f 8)" 124 12 5 "0 so far"
 # M: Claude's own tool results (for example a slow nudge reply) do not restart the count
 n=$(date +%s); f=$W/m.jsonl; { H $((n-5000)); A $((n-4990)); U $((n-70)); A $((n-65)); } > $f; st m.jsonl "5 0 $((n-5000))"
-check M-own-activity-keeps-count "$(run $f 30)" 0 20 0 "wake-up 6 of 17"
+check M-own-activity-keeps-count "$(run $f 30)" 0 20 0 "wake-up 6 of 9"
 # P: a new user message restarts the count
 n=$(date +%s); f=$W/p.jsonl; { H $((n-5000)); A $((n-4990)); H $((n-80)); A $((n-75)); } > $f; st p.jsonl "5 0 $((n-5000))"
-check P-user-restarts-count "$(run $f 30)" 0 20 0 "wake-up 1 of 17"
+check P-user-restarts-count "$(run $f 30)" 0 20 0 "wake-up 1 of 9"
 # Q: an older Claude Code (no marks): a plain message counts as the user...
 n=$(date +%s); f=$W/q.jsonl; { O $((n-80)); A $((n-75)); } > $f; st q.jsonl "5 0 $((n-5000))"
-check Q-old-version-user "$(run $f 30)" 0 20 0 "wake-up 1 of 17"
+check Q-old-version-user "$(run $f 30)" 0 20 0 "wake-up 1 of 9"
 # R: ...and so does an unmarked wake-up from a finished job
 n=$(date +%s); f=$W/r.jsonl; { O $((n-5000)); A $((n-4990)); N $((n-80)); A $((n-75)); } > $f; st r.jsonl "5 0 $((n-5000))"
-check R-old-version-wakeup "$(run $f 30)" 0 20 0 "wake-up 1 of 17"
+check R-old-version-wakeup "$(run $f 30)" 0 20 0 "wake-up 1 of 9"
 # V: Cache Saver's OWN nudge wake-up keeps the count going
 n=$(date +%s); f=$W/v.jsonl; { H $((n-5000)); A $((n-4990)); T $((n-80)); A $((n-75)); } > $f; st v.jsonl "5 0 $((n-5000)) $((n-82))"
-check V-own-nudge-keeps-count "$(run $f 30)" 0 20 0 "wake-up 6 of 17"
+check V-own-nudge-keeps-count "$(run $f 30)" 0 20 0 "wake-up 6 of 9"
 # W: in a loop, another chat's message restarts the count with no human at all
 n=$(date +%s); f=$W/w.jsonl; { H $((n-5000)); A $((n-4990)); X $((n-80)); A $((n-75)); } > $f; st w.jsonl "5 0 $((n-5000)) $((n-3000))"
-check W-loop-restarts-count "$(run $f 30)" 0 20 0 "wake-up 1 of 17"
+check W-loop-restarts-count "$(run $f 30)" 0 20 0 "wake-up 1 of 9"
 # S: a counter file from an older version (two numbers) stays switched off
 n=$(date +%s); f=$W/s.jsonl; { H $((n-300)); A $((n-290)); } > $f; st s.jsonl "17 $((n-100))"
 check S-old-counter-file "$(run $f 30)" 3 20 0 "still switched off"
+# Y: a wake-up that lands while Claude is still working (not idle) does not restart the count
+n=$(date +%s); f=$W/y.jsonl; { H $((n-5000)); A $((n-4990)); U $((n-90)); A $((n-85)) false claude-x tool_use; T $((n-80)); U $((n-75)); A $((n-70)); } > $f; st y.jsonl "5 0 $((n-5000)) $((n-3000))"
+check Y-mid-work-wakeup-ignored "$(run $f 30)" 0 20 0 "wake-up 6 of 9"
+# Z: your own message counts even while Claude is working
+n=$(date +%s); f=$W/z.jsonl; { H $((n-5000)); A $((n-4990)); U $((n-90)); A $((n-85)) false claude-x tool_use; H $((n-80)); U $((n-75)); A $((n-70)); } > $f; st z.jsonl "5 0 $((n-5000)) $((n-3000))"
+check Z-your-message-mid-work "$(run $f 30)" 0 20 0 "wake-up 1 of 9"
+# FM: --find-me finds the one chat containing the word
+C=$W/conf; mkdir -p $C/projects/p1 $C/projects/p2; n=$(date +%s)
+{ H $((n-70)); A $((n-65)); echo '{"type":"note","text":"cs-q7z3m9x"}'; } > $C/projects/p1/one.jsonl; { H $((n-70)); A $((n-65)); } > $C/projects/p2/two.jsonl
+check FM-find-me "$(runfm $C cs-q7z3m9x 30)" 0 20 0 "quiet"
+# FM2: a word in two chats is refused, not guessed
+echo '{"type":"note","text":"cs-q7z3m9x"}' >> $C/projects/p2/two.jsonl
+check FM2-find-me-ambiguous "$(runfm $C cs-q7z3m9x 30)" 2 20 0 "2 chats contain"
+# DUP: starting a second copy on the same chat stops the first (exit 4), so the cost never doubles
+n=$(date +%s); f=$W/dup.jsonl; { H $n; A $n; } > $f; rm -f $W/state/dup.jsonl.state*
+run $f 150 > $W/dup1.out & p1=$!; sleep 5
+run $f 150 > $W/dup2.out & p2=$!
+wait $p1; check DUP-first-copy-steps-aside "$(cat $W/dup1.out)" 4 75 50 "newer copy"
+wait $p2; check DUP-second-copy-keeps-watch "$(cat $W/dup2.out)" 0 75 50 "quiet"
 fi
 # G: no readable entries -> falls back to the file's modified time
 f=$W/g.jsonl; echo "not json" > $f; touch -d "@$(( $(date +%s) - 70 ))" $f
@@ -101,8 +126,8 @@ fi
 # H: at the last allowed wake-up it switches off
 n=$(date +%s); f=$W/h.jsonl
 if [ $FALLBACK = no ]; then { H $((n-70)); A $((n-65)); } > $f; else echo "x" > $f; touch -d "@$((n-70))" $f; fi
-st h.jsonl "16 0"
-check H-switch-off "$(run $f 30)" 3 20 0 "switched off at wake-up 17"
+st h.jsonl "8 0"
+check H-switch-off "$(run $f 30)" 3 20 0 "switched off at wake-up 9"
 # I: still off when nothing new happened
 check I-stays-off "$(run $f 30)" 3 20 0 "still switched off"
 # J: the user came back (a new message after the switch-off) -> starts fresh and waits

@@ -18,7 +18,7 @@ Keep your Claude Code chats warm while they wait: while you step away,<br>
 or while an **autonomous loop** runs with nobody at the keyboard.<br>
 Your **5-hour window** and **weekly limit** last much longer.
 
-## Up to 89% less usage when you come back from a break.
+## Up to 78% less usage when you come back from a break.
 
 **Running autonomous loops? The savings multiply.** You never have to come back: every chat that
 waits for another chat or a long job stays warm, and saves the moment it is woken.
@@ -30,9 +30,10 @@ waits for another chat or a long job stays warm, and saves the moment it is woke
 ---
 
 > [!TIP]
-> **The one rule:** coming back to Claude Code **within about 16 hours**? Leave it on. It always saves.
-> Away **longer** (a weekend, a trip)? Turn it off before you go. **Forget? It switches itself off
-> at the break-even point and leaves you a note saying why.** It can never cost you more than it saves.
+> **The one rule:** coming back to Claude Code **within about 8 hours**? Leave it on. It saves.
+> Away **longer** (overnight, a weekend)? Turn it off before you go. **Forget? It switches itself off
+> at the break-even point and leaves you a note saying why.** The most it can ever cost you extra is
+> about one restart.
 
 ---
 
@@ -41,10 +42,11 @@ waits for another chat or a long job stays warm, and saves the moment it is woke
 **No install. No account. No settings.** Paste this into your Claude Code chat:
 
 ```text
-Download https://raw.githubusercontent.com/OutletBoy/cache-saver/main/skills/cache-saver/SKILL.md and https://raw.githubusercontent.com/OutletBoy/cache-saver/main/skills/cache-saver/cache-saver.sh into ~/.claude/skills/cache-saver/, then read that skill and start Cache Saver.
+Download https://raw.githubusercontent.com/OutletBoy/cache-saver/main/skills/cache-saver/SKILL.md, https://raw.githubusercontent.com/OutletBoy/cache-saver/main/skills/cache-saver/cache-saver.sh and https://raw.githubusercontent.com/OutletBoy/cache-saver/main/skills/cache-saver/cache-saver.ps1 into ~/.claude/skills/cache-saver/, then read that skill and start Cache Saver.
 ```
 
-That is the whole setup. Walk away. Claude keeps the chat warm until you come back.
+That is the whole setup (the first time, Claude may ask to run the command: see
+[permissions](#things-that-can-turn-it-off-without-you-noticing)). Walk away. Claude keeps the chat warm until you come back.
 From now on, in any chat, just say **"start the cache saver"** or **"stop the cache saver"**.
 
 ### Step 2 (recommended): make Claude follow the rule every time
@@ -57,10 +59,10 @@ ask Claude to add it for you:
 At the start of every session, start Cache Saver (the cache-saver skill) as a background task.
 Every time it finishes, do what its last line says. If it switched itself off, start it again the
 next time anything wakes this chat (me, another chat, or a finished job). If I stopped it myself,
-or I say I will be away for more than about 16 hours, leave it off.
+or I say I will be away for more than about 8 hours, leave it off.
 ```
 
-Now it is on in every chat, and Claude follows the 16-hour rule for you.
+Now it is on in every chat, and Claude follows the 8-hour rule for you.
 
 ### Just ask Claude
 
@@ -81,19 +83,14 @@ The share of what coming back from a break would cost you, saved by Cache Saver:
 | Your break | You save | Worth it? |
 |---|:---:|:---:|
 | Under 1 hour | still warm, not needed | - |
-| **1 hour** (lunch) | **89%** | **YES** |
-| **2 hours** (a meeting) | **83%** | **YES** |
-| 3 hours | **78%** | **YES** |
-| **4 hours** (an afternoon out) | **72%** | **YES** |
-| 6 hours | **61%** | **YES** |
-| **8 hours** (overnight) | **50%** | **YES** |
-| 10 hours | **39%** | **YES** |
-| 12 hours | 22% | yes, a little |
-| 14 hours | 11% | yes, a little |
-| 16 hours | about 0% | break-even |
-| 20 hours | costs 22% more | turn it off |
-| 24 hours | costs 50% more | turn it off |
-| **A normal work day** (lunch + meeting + overnight) | **about 70%** | **YES** |
+| **1 hour** (lunch) | **78%** | **YES** |
+| **2 hours** (a meeting) | **67%** | **YES** |
+| 3 hours | **56%** | **YES** |
+| **4 hours** (an afternoon out) | **44%** | **YES** |
+| 6 hours | 22% | yes, a little |
+| 8 hours | about 0% | break-even: it switches itself off here |
+| Overnight or longer | costs about one extra restart | turn it off before you go |
+| **A normal work day** (lunch + a meeting) | **about 72%** | **YES** |
 
 **Your first message back is about 18 times cheaper.** Bigger chats save more, because a cold
 restart re-reads everything.
@@ -107,10 +104,12 @@ Measured, not guessed. We read thousands of real Claude Code turns from our own 
 
 - Coming back to a **cold** chat re-saved the whole conversation. A typical 360,000-token chat
   re-saved about 333,000 tokens, at **double** the normal rate.
-- A **warm** nudge only re-read it at **a tenth** of the rate, and saved about 650 new tokens.
+- A **warm** request only re-read it at **a tenth** of the rate, and saved about 650 new tokens.
 
-So one cold restart costs about as much as **18 nudges**, using Anthropic's published cache rates.
-That ratio holds for any chat size and any plan. Anthropic does not publish how many tokens one
+So one cold restart costs about as much as **18 warm requests**, using Anthropic's published cache
+rates. Each nudge is **two** short requests (the wake-up, then Claude starting Cache Saver again), so
+one cold restart is worth about **9 nudges**. That ratio holds for any chat size and any plan.
+A break of H hours takes about H x 60 / 55 nudges (rounded up), so it saves 1 minus that number / 9. Anthropic does not publish how many tokens one
 percent of a subscription limit is, so savings are shown as a share of what the break would cost.
 
 **On the pay-per-token API?** The same percentages apply to your bill. Multiply by your model's price
@@ -133,17 +132,17 @@ a big bite out of your limits right when you sit back down to work.
 | **Your limits last longer** | Fewer "you have hit your limit" moments mid-work |
 | **Instant answers when you return** | No waiting while Claude re-reads the chat |
 | **1-minute setup** | One sentence. Nothing to install |
-| **Tiny and safe** | One small file. No keys, no internet, only looks at times, never your chat's words |
+| **Tiny and safe** | Two small files (a script and Claude's instructions). No keys, no internet, never reads your chat's words |
 | **Never late** | Times each hour from the moment Claude starts working, and leans early whenever it is unsure |
-| **You always know it worked** | Each wake-up leaves one line in your chat: *"Cache Saver: kept your chat warm (wake-up 3 of 17)."* |
-| **Never costs more than it saves** | Switches itself off at the break-even point and tells you why |
+| **You always know it worked** | Each wake-up leaves one line in your chat: *"Cache Saver: kept your chat warm (wake-up 3 of 9)."* |
+| **Knows when to stop** | Switches itself off at the break-even point and tells you why; the most it can cost extra is about one restart |
 | **Claude knows it inside out** | Ask Claude when to use it, what it saves, or how to change it |
 | **Free forever** | MIT license. Use it, change it, share it |
 
 **Perfect for:**
 
 - **Lunch breaks and meetings:** come back to a chat that answers instantly.
-- **Overnight jobs:** a long test run finishes, and Claude can fix failures straight away.
+- **Long jobs:** a long test run finishes, and Claude can fix failures straight away.
 - **Big codebases:** Claude has read dozens of large files; keeping that warm saves the most.
 - **Teams of chats** (loop engineering): every long-running chat stays warm while it waits.
 - **Anyone hitting their weekly limit:** a few avoided restarts a day add up, week after week.
@@ -169,10 +168,10 @@ multiply with every chat you add.**
 | | Without Cache Saver | With Cache Saver |
 |---|---|---|
 | Cold restarts per day | **9 full restarts** | none |
-| What the waits cost | 9 restarts' worth | about **1.5** restarts' worth of small nudges |
-| Saved | | **about 83% of what those waits cost** |
+| What the waits cost | 9 restarts' worth | about **3** restarts' worth of small nudges |
+| Saved | | **about 67% of what those waits cost** |
 
-Add an overnight wait for the whole team and the saving grows again.
+Wait shorter, save more: a chat that waits one hour at a time saves about 78% of each wait.
 
 **Great loop use cases:**
 
@@ -183,7 +182,7 @@ Add an overnight wait for the whole team and the saving grows again.
 - **Long-lived "memory" chats** that hold the project's context and should never lose it.
 
 **Skip it for:** short worker chats that do one job and close (they never wait), one-shot headless runs
-(`claude -p`), and any chat that will wait more than about 16 hours.
+(`claude -p`), and any chat that will wait more than about 8 hours.
 
 **Setting it up for a loop:**
 
@@ -191,8 +190,8 @@ Add an overnight wait for the whole team and the saving grows again.
    shared project, so **every** chat starts its own Cache Saver automatically.
 2. That is it. Each chat finds and watches **its own** conversation (the skill uses the `--find-me`
    option), so chats never get mixed up.
-3. A chat that is busy working is not quiet, so it is never nudged. You only pay for chats that are
-   actually waiting.
+3. A chat that is busy working keeps its own cache warm (every step it takes is a fresh request), so
+   Cache Saver just waits. You only pay for chats that are actually waiting.
 
 ---
 
@@ -200,16 +199,16 @@ Add an overnight wait for the whole team and the saving grows again.
 
 1. Claude runs Cache Saver as a **background task**.
 2. It watches **when** Claude last started working in your chat (each entry in the chat file has a
-   time on it). It only looks at those times, never at what the chat says.
+   time on it). It only looks at those times and labels, never at what the chat says.
 3. 55 minutes after that start, if nothing new has happened, it stops, which wakes Claude up.
-4. Claude replies with one line, **"Cache Saver: kept your chat warm (wake-up 3 of 17)."**, so you can
+4. Claude replies with one line, **"Cache Saver: kept your chat warm (wake-up 3 of 9)."**, so you can
    see what happened while you were away. That reply refreshes the cache for another hour, and it
    starts again.
-5. **Still away at the 17th wake-up (about 16 quiet hours)?** One more nudge would cost more than it
+5. **Still away at the 9th wake-up (about 8 quiet hours)?** One more nudge would cost more than it
    could ever save. So instead of nudging, Cache Saver **switches itself off**, and that last wake-up
    is Claude leaving you a note for when you come back:
 
-> *Cache Saver switched itself off after about 16 quiet hours, because leaving it on would have cost
+> *Cache Saver switched itself off after about 8 quiet hours, because leaving it on would have cost
 > more than it saves. Your next message will re-read the chat once, and Cache Saver turns itself back on.*
 
 6. **The next time anything wakes the chat** (you, another chat in a loop, or a finished job),
@@ -234,9 +233,9 @@ Cache Saver lives inside your Claude Code chat, so anything that stops the chat 
 | **You close the chat, the terminal, or Claude Code** | It stops with the chat | Start it again in your next chat |
 | **Your computer restarts, shuts down, or crashes** (including Windows updates) | It stops with everything else | Start it again after the restart |
 | **Claude Code updates or restarts** | Same as closing it | Start it again |
-| **Your computer goes to sleep** (lid closed, sleep mode) | Nothing can run while it sleeps, so the cache usually goes cold anyway | Keep the computer awake (plugged in, sleep off) during breaks you want covered |
+| **Your computer goes to sleep** (lid closed, sleep mode) | Nothing can run while it sleeps; if it sleeps past the hour, the cache goes cold anyway (after a short sleep it catches up within a minute) | Keep the computer awake (plugged in, sleep off) during breaks you want covered |
 | **Your internet drops** | The nudge cannot reach Claude, so the cache goes cold | Nothing; it works again when you are back online |
-| **Claude asks you to approve the command** | The first run may ask permission, and it cannot restart until you answer | Choose "always allow" for the Cache Saver command once |
+| **Claude asks you to approve the command** | It cannot restart until you answer | Each start uses a new random word, so allow the script itself: add `Bash(bash ~/.claude/skills/cache-saver/cache-saver.sh:*)` to `permissions.allow` in `~/.claude/settings.json` (or ask Claude to) |
 | **You hit your usage limit** | Claude cannot reply, so it cannot restart it | It comes back after your limit resets; start it again |
 | **Claude waits on ONE step for over an hour** (a single very long command, or a helper agent that runs for hours) | Claude cannot send the nudge until that step ends, so the chat's cache can go cold meanwhile (the helper keeps its own cache warm) | Nothing needed for normal work: steps that each finish within an hour are fine. For very long jobs, run them in the background so Claude stays free |
 | **The chat gets compacted** (`/compact`, or automatically when it gets very long) | Compacting can end background tasks | Ask Claude to start it again |
@@ -258,7 +257,7 @@ Cache Saver lives inside your Claude Code chat, so anything that stops the chat 
 
 <br>
 
-- You will be away **more than about 16 hours**: the nudges add up to more than one restart.
+- You will be away **more than about 8 hours**: the nudges add up to more than one restart.
 - You are **done with this chat** and will start a fresh one.
 - The chat is **short**: re-reading it is cheap anyway.
 - Your cache lasts only **5 minutes**: only worth it for short breaks in a huge chat (use `--minutes 4`).
@@ -270,10 +269,11 @@ Cache Saver lives inside your Claude Code chat, so anything that stops the chat 
 
 <br>
 
-Yes. It looks at one file on your own computer, your chat's record, and uses only two things from each
-entry: what kind it is (your message or Claude's reply) and its time. It never uses what the chat says,
-writes only one tiny counter file per chat (in `~/.claude/cache-saver/`), opens no network connections,
-and needs no credentials.
+Yes. It reads your chat's record on your own computer and uses only a few labels from each entry: what
+kind it is (your message, Claude's reply, a tool result), whether Claude had finished its turn, and its
+time. It never uses what the chat says. To find its own chat, it searches your chats changed in the
+last 10 minutes for one random word it was just given, and nothing else. It writes two tiny files per
+chat (in `~/.claude/cache-saver/`), opens no network connections, and needs no credentials.
 
 </details>
 
@@ -283,7 +283,7 @@ and needs no credentials.
 <br>
 
 Yes. `cache-saver.sh` runs on macOS, Linux, and Windows with Git Bash (which Claude Code uses on
-Windows). `cache-saver.ps1` is included for Windows without bash.
+Windows). `cache-saver.ps1` is included for Windows without bash; the skill uses it there.
 
 </details>
 
@@ -299,15 +299,15 @@ Claude *"start the cache saver"*. Or run the script without the skill:
 Run bash /path/to/cache-saver.sh as a background task. Every time it finishes, do what its last line says. Stop when I say "stop the cache saver".
 ```
 
-On Windows with PowerShell only, use `powershell -File C:\path\to\cache-saver.ps1` instead.
+On Windows with PowerShell only, use `powershell -ExecutionPolicy Bypass -File C:\path\to\cache-saver.ps1` instead.
 
 | Option | What it does | Default |
 |---|---|---|
 | `--minutes N` (`-Minutes N`) | Quiet minutes before the nudge | `55` |
-| `--max-nudges N` (`-MaxNudges N`) | Wake-ups in a row before it switches itself off; the last one is the note (0 = never) | `17` |
+| `--max-nudges N` (`-MaxNudges N`) | Wake-ups in a row before it switches itself off; the last one is the note (0 = never) | `9` |
 | `--find-me WORD` (`-FindMe WORD`) | Watch the chat whose record contains this fresh random word; finds the right chat even with several running | |
 | `--file PATH` (`-File PATH`) | Which chat to watch | the most recent chat |
-| `--help` | Shows the usage text | |
+| `--help` (`-Help`) | Shows the usage text | |
 
 Set `--minutes` a few minutes below your cache lifetime. For a 1-hour cache, `55` is right.
 
@@ -341,14 +341,14 @@ just keeps waiting; its clock only runs once Claude goes quiet. The last request
 seconds before the turn ends: we measured over 60,000 real replies, and 99.9% finish within 2.3
 minutes of starting. Timing from the start makes the rare slow one safe too.
 
-It also knows what counts as the chat being used. Your message, another chat's message in a loop,
-or a background job finishing all wake the chat and use the warm cache, so each one starts the count
-again: a loop saves with nobody at the keyboard. Cache Saver's own nudges do not count, so the
+It also knows what counts as the chat being used. Your message, or anything that wakes the chat while
+Claude is idle (another chat's message in a loop, a background job finishing, a scheduled wake-up),
+uses the warm cache, so each one starts the count again: a loop saves with nobody at the keyboard. Cache Saver's own nudges do not count, so the
 switch-off point stays right when nothing is happening.
 
 We also measured the hour itself: replies sent up to 60 minutes after the last one were always warm,
 and every one after 62 minutes was cold. If it cannot read the times (an unusual setup), it falls back
-to when the chat file last changed and nudges about 3 minutes early, so it still lands inside the hour.
+to when the chat file last changed and nudges about 3 minutes early, so it normally lands inside the hour.
 A nudge a little early costs one tiny reply; a nudge late costs a full re-read, so it always picks early.
 
 </details>
@@ -359,7 +359,8 @@ A nudge a little early costs one tiny reply; a nudge late costs a full re-read, 
 <br>
 
 Yes. `tests/run-tests.sh` checks the timing and the "are you back?" logic with made-up chat records:
-slow replies, long turns, background jobs, error replies, older Claude Code versions, and the fallback.
+slow replies, long turns, background jobs, loops, wake-ups mid-work, two copies on one chat, finding
+its own chat, error replies, older Claude Code versions, and the fallback (27 checks per reader).
 It runs against both scripts and every way they can read the chat (`bash tests/run-tests.sh sh` or
 `bash tests/run-tests.sh ps1`; needs GNU `date`, as on Linux or Git Bash).
 

@@ -9,17 +9,19 @@
 #
 # Usage: bash cache-saver.sh [--minutes N] [--max-nudges N] [--find-me WORD | --file PATH]
 #   --minutes N     quiet time before a nudge (default 55; the cache lasts 60)
-#   --max-nudges N  nudges in a row before it switches itself off (default 17,
-#                   about the cost of one cold restart; 0 = never)
+#   --max-nudges N  wake-ups in a row before it switches itself off (default 9:
+#                   each nudge is two short requests, so 8 nudges plus the note cost
+#                   about one cold restart; 0 = never)
 #   --find-me WORD  watch the chat whose transcript contains WORD: Claude puts a fresh
 #                   random word in its own command, so it always finds ITS chat, even
 #                   with several chats running (recommended)
 #   --file PATH     transcript to watch (default: the newest one Claude Code wrote)
 #
-# Exit codes: 0 = nudge (reply and start again), 3 = switched off, 2 = error.
+# Exit codes: 0 = nudge (reply and start again), 3 = switched off, 2 = error,
+#             4 = a newer copy took over this chat (do nothing).
 
 MINUTES=55
-MAX_NUDGES=17
+MAX_NUDGES=9
 FILE=""
 FIND=""
 while [ $# -gt 0 ]; do
@@ -28,7 +30,7 @@ while [ $# -gt 0 ]; do
     --max-nudges) MAX_NUDGES="$2"; shift 2 ;;
     --file) FILE="$2"; shift 2 ;;
     --find-me) FIND="$2"; shift 2 ;;
-    -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,21p' "$0"; exit 0 ;;
     *) echo "cache-saver: unknown option $1 (try --help)"; exit 2 ;;
   esac
 done
@@ -48,46 +50,58 @@ mtime() { stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null; }
 #                    not when its reply ends. The request behind the newest reply
 #                    went out right after the newest entry before that reply (a
 #                    message, a tool result, or a background-task wake-up).
-#   wake time     -- the newest entry that woke the chat from outside: the user's
-#                    message, another chat's message, or a finished background job.
-#                    Any of these means the kept-warm cache got used, so the count
+#   wake time     -- the newest entry that woke the chat: the user's message, or
+#                    anything that arrived while Claude was idle (its last reply had
+#                    ended its turn) -- another chat's message, a finished job, a
+#                    scheduled wake-up. The kept-warm cache got used, so the count
 #                    starts again: an autonomous loop saves with nobody at the
-#                    keyboard. Tool results are Claude's own work and never count;
-#                    Cache Saver's OWN wake-up is told apart by its time (below).
+#                    keyboard. Entries in the middle of Claude's own work never
+#                    count; Cache Saver's OWN wake-up is told apart by its time.
 # Side-chats (subagents) and error replies are skipped. Uses node, jq or python,
 # whichever is present; with none, the file's modified time stands in for both.
-NODE_JS='let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{let u=0,r=0,h=0,a=0;
+NODE_JS='let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{let u=0,r=0,h=0,a=0,idle=true;
 for(const l of d.split("\n")){let o;try{o=JSON.parse(l)}catch(e){continue}
 if(!o||typeof o!=="object"||o.isSidechain||typeof o.timestamp!=="string")continue;
 const t=Math.floor(Date.parse(o.timestamp)/1000);if(!(t>0))continue;const m=(o.message&&typeof o.message==="object")?o.message:{};
-if(o.type==="user"){u=t;a=t;if(human(o,m))h=t}else if(o.type==="assistant"&&m.usage&&m.model!=="<synthetic>"){if(u)r=u;a=t}}
+if(o.type==="user"){u=t;a=t;if(woke(o,m,idle))h=t}
+else if(o.type==="assistant"&&m.usage&&m.model!=="<synthetic>"){if(u)r=u;a=t;const s=m.stop_reason;if(s)idle=(s!=="tool_use"&&s!=="pause_turn")}}
 if(a)console.log((r||u||a)+" "+h)});
-function human(o,m){if(o.isMeta||o.isCompactSummary)return false;const c=m.content;
-if(Array.isArray(c))return !c.some(x=>x&&x.type==="tool_result");
-return typeof c==="string"}'
-JQ_PROG='def human: if .isMeta == true or .isCompactSummary == true then false
+function woke(o,m,idle){if(o.isCompactSummary)return false;const c=m.content;
+if(Array.isArray(c)&&c.some(x=>x&&x.type==="tool_result"))return false;
+if(typeof c!=="string"&&!Array.isArray(c))return false;
+if(o.origin&&typeof o.origin==="object"&&o.origin.kind==="human")return true;
+return idle}'
+JQ_PROG='def woke($idle): if .isCompactSummary == true then false
     elif (.message | type) != "object" then false
-    elif (.message.content | type) == "array" then ([.message.content[] | select(type == "object" and .type == "tool_result")] | length) == 0
-    elif (.message.content | type) == "string" then true
-    else false end;
+    elif (.message.content | type) == "array" and ([.message.content[] | select(type == "object" and .type == "tool_result")] | length) > 0 then false
+    elif ((.message.content | type) != "string") and ((.message.content | type) != "array") then false
+    elif (.origin | type) == "object" and .origin.kind == "human" then true
+    else $idle end;
   reduce (inputs | fromjson? | select(type == "object" and (.isSidechain | not) and (.timestamp | type) == "string")) as $o
-  ({u: 0, r: 0, h: 0, a: 0};
+  ({u: 0, r: 0, h: 0, a: 0, i: true};
    (($o.timestamp | sub("\\.[0-9]+"; "") | fromdateiso8601?) // 0) as $t
    | if $t == 0 then .
-     elif $o.type == "user" then .u = $t | .a = $t | (if ($o | human) then .h = $t else . end)
+     elif $o.type == "user" then .i as $i | .u = $t | .a = $t | (if ($o | woke($i)) then .h = $t else . end)
      elif $o.type == "assistant" and ($o.message | type) == "object" and $o.message.usage != null and $o.message.model != "<synthetic>"
        then (if .u > 0 then .r = .u else . end) | .a = $t
+            | (($o.message.stop_reason // null) as $s | if $s == null then . else .i = ($s != "tool_use" and $s != "pause_turn") end)
      else . end)
   | if .a > 0 then "\(if .r > 0 then .r elif .u > 0 then .u else .a end) \(.h)" else empty end'
 PY_PROG='import sys, json, datetime
-def human(o, m):
-    if o.get("isMeta") or o.get("isCompactSummary"):
+def woke(o, m, idle):
+    if o.get("isCompactSummary"):
         return False
     c = m.get("content")
-    if isinstance(c, list):
-        return not any(isinstance(x, dict) and x.get("type") == "tool_result" for x in c)
-    return isinstance(c, str)
+    if isinstance(c, list) and any(isinstance(x, dict) and x.get("type") == "tool_result" for x in c):
+        return False
+    if not isinstance(c, (str, list)):
+        return False
+    g = o.get("origin")
+    if isinstance(g, dict) and g.get("kind") == "human":
+        return True
+    return idle
 u = r = h = a = 0
+idle = True
 for l in sys.stdin.buffer.read().decode("utf-8", "replace").split("\n"):
     try:
         o = json.loads(l)
@@ -102,11 +116,14 @@ for l in sys.stdin.buffer.read().decode("utf-8", "replace").split("\n"):
     m = o.get("message") if isinstance(o.get("message"), dict) else {}
     if o.get("type") == "user":
         u = a = t
-        if human(o, m):
+        if woke(o, m, idle):
             h = t
     elif o.get("type") == "assistant" and m.get("usage") and m.get("model") != "<synthetic>":
         r = u or r
         a = t
+        s = m.get("stop_reason")
+        if s:
+            idle = s not in ("tool_use", "pause_turn")
 if a:
     print(r or u or a, h)'
 PARSER=""
@@ -162,6 +179,10 @@ if isnum "${CACHE_SAVER_TEST_SECONDS:-}"; then LIMIT="$CACHE_SAVER_TEST_SECONDS"
 # this long after a start are Claude's own restart.)
 GRACE=120
 if [ "$LIMIT" -lt 240 ]; then GRACE=$(( LIMIT / 2 )); fi
+# A wake-up this soon after Cache Saver's own exit is its own (the task
+# notification lands within seconds), not someone else waking the chat.
+OWNWIN=60
+if [ "$LIMIT" -lt 120 ]; then OWNWIN=$(( LIMIT / 2 )); fi
 # Fallback only: the modified time is when the reply ENDED, a little after its
 # request started, so the fallback counts from a bit earlier (about 3 minutes at
 # the default). Early costs one slightly early nudge; late costs a full restart.
@@ -175,6 +196,7 @@ mkdir -p "$STATE_DIR" 2>/dev/null
 STATE="$STATE_DIR/$(basename "$FILE").state"
 COUNT=0; STOPPED=0; SEEN=0; OWN=0
 if [ -f "$STATE" ]; then read -r COUNT STOPPED SEEN OWN < "$STATE"; fi
+COUNT=${COUNT%$'\r'}; STOPPED=${STOPPED%$'\r'}; SEEN=${SEEN%$'\r'}; OWN=${OWN%$'\r'}
 isnum "$COUNT" || COUNT=0
 isnum "$STOPPED" || STOPPED=0
 isnum "$SEEN" || SEEN=0
@@ -186,7 +208,7 @@ save() { printf '%s %s %s %s\n' "$COUNT" "$STOPPED" "$SEEN" "$OWN" > "$STATE" 2>
 # ones already counted, and not Cache Saver's own. Fallback mode: the file
 # changed well after $1 (a start or a stop).
 user_back() {
-  if [ "$mode" = p ]; then [ "$human" -gt "$SEEN" ] && [ "$human" -gt $(( OWN + GRACE )) ]
+  if [ "$mode" = p ]; then [ "$human" -gt "$SEEN" ] && [ "$human" -gt $(( OWN + OWNWIN )) ]
   else [ "$human" -gt $(( $1 + GRACE )) ]; fi
 }
 fresh() {  # something woke the chat: start the count again
@@ -212,6 +234,14 @@ if [ "$STOPPED" -gt 0 ]; then
 elif [ "$mode" = p ] && user_back; then fresh
 fi
 
+# One copy per chat. Each start writes its own token; an older copy that sees
+# a different token stops (exit 4), so starting it twice never doubles the cost.
+LIVE="$STATE.live"
+TOKEN="$$.$START.$RANDOM"
+printf '%s\n' "$TOKEN" > "$LIVE" 2>/dev/null
+mine() { [ "$(cat "$LIVE" 2>/dev/null)" = "$TOKEN" ]; }
+let_go() { mine && rm -f "$LIVE" 2>/dev/null; }
+
 if [ "$MAX_NUDGES" -gt 0 ]; then
   echo "cache-saver: watching $(basename "$FILE"); nudge after $MINUTES quiet minutes; switches off at wake-up $MAX_NUDGES in a row (${COUNT} so far)"
 else
@@ -219,6 +249,10 @@ else
 fi
 
 while true; do
+  if ! mine; then
+    echo "CACHE SAVER: a newer copy is now watching this chat, so this one stopped. Do nothing and do NOT start it again."
+    exit 4
+  fi
   read -r req human mode <<EOF
 $(times "$FILE")
 EOF
@@ -232,15 +266,18 @@ EOF
     if [ "$MAX_NUDGES" -gt 0 ] && [ $(( COUNT + 1 )) -ge "$MAX_NUDGES" ]; then
       COUNT=$(( COUNT + 1 ))            # this last wake-up is the stop note itself
       STOPPED=$now; OWN=$now; [ "$SEEN" -lt "$now" ] && SEEN=$now; save
-      if [ "$mode" = p ] && [ "$human" -gt 0 ]; then away=$(( now - human )); else away=$(( (COUNT - 1) * LIMIT + now - last )); fi
+      away=$(( (COUNT - 1) * LIMIT + now - last ))   # the quiet stretch spanned every wake-up
       hrs=$(( (away + 1800) / 3600 )); [ "$hrs" -lt 1 ] && hrs=1
       echo "CACHE SAVER: switched off at wake-up $COUNT of $MAX_NUDGES (about $hrs hour(s) with nothing waking the chat). Keeping it on any longer would cost more usage than one fresh restart, so it stopped to save the user's usage. Do NOT start it again. Write the user a short note they will see when they come back: Cache Saver switched itself off after about $hrs quiet hour(s) because leaving it on would have cost more than it saves; the next message will re-read the chat once, and Cache Saver turns itself back on then. The next time anything wakes this chat (the user, another chat, or a finished job), start Cache Saver again and mention it in one line."
-      exit 3
+      let_go; exit 3
     fi
     COUNT=$(( COUNT + 1 )); OWN=$now; save
     if [ "$MAX_NUDGES" -gt 0 ]; then n="wake-up $COUNT of $MAX_NUDGES"; else n="nudge $COUNT"; fi
     echo "CACHE SAVER: ${age}s quiet ($n) -- reply with exactly this one line so the user knows why you woke: \"Cache Saver: kept your chat warm ($n).\" Then start Cache Saver again."
-    exit 0
+    let_go; exit 0
   fi
-  sleep $(( LIMIT - age + 1 ))
+  # Short steps, re-reading the clock each time: a long sleep pauses while the
+  # computer sleeps, and would wake up after the cache hour had run out.
+  w=$(( LIMIT - age + 1 )); [ "$w" -gt 60 ] && w=60
+  sleep "$w"
 done
