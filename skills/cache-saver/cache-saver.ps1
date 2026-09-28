@@ -47,18 +47,19 @@ function Get-MTime { Get-Epoch (Get-Item -LiteralPath $File).LastWriteTime }
 #   request start -- the cache's hour restarts when a request to Claude STARTS,
 #                    not when its reply ends: right after the newest entry before
 #                    the newest reply (a message, a tool result, or a wake-up).
-#   human time    -- the newest message the USER sent. Only this means "the user
-#                    is back"; Claude's own replies and background-task wake-ups
-#                    never do.
+#   wake time     -- the newest entry that woke the chat from outside: the user's
+#                    message, another chat's message, or a finished background job.
+#                    Any of these means the cache got used, so the count starts
+#                    again (a loop saves with nobody at the keyboard). Tool results
+#                    never count; Cache Saver's own wake-up is told apart by time.
 # Side-chats (subagents) and error replies are skipped. Returns
-# @(request start, human time, "p"), or @(modified time, modified time, "f")
+# @(request start, wake time, "p"), or @(modified time, modified time, "f")
 # when the record cannot be read.
 function Test-Human($o) {
-  if ($o.origin -is [System.Management.Automation.PSCustomObject] -and $null -ne $o.origin.PSObject.Properties['kind']) { return ($o.origin.kind -eq "human") }
   if ($o.isMeta -eq $true -or $o.isCompactSummary -eq $true) { return $false }
   if ($null -eq $o.message) { return $false }
   $c = $o.message.content
-  if ($c -is [string]) { return (-not $c.StartsWith("<task-notification>")) }
+  if ($c -is [string]) { return $true }
   if ($c -is [array]) { foreach ($x in $c) { if ($null -ne $x -and $x.type -eq "tool_result") { return $false } }; return $true }
   return $false
 }
@@ -93,8 +94,9 @@ function Get-Times {
 
 $limit = $Minutes * 60
 if ($env:CACHE_SAVER_TEST_SECONDS -match '^\d+$') { $limit = [int]$env:CACHE_SAVER_TEST_SECONDS }
-# Fallback only (the record could not be read): changes this long after a start
-# are Claude's own restart; later changes mean the user is back.
+# Entries this soon after Cache Saver's own exit are its own wake-up and Claude's
+# reply to it. (In the fallback: changes this long after a start are Claude's
+# own restart.)
 $grace = 120
 if ($limit -lt 240) { $grace = [int][math]::Floor($limit / 2) }
 # Fallback only: the modified time is when the reply ENDED, a little after its
@@ -103,26 +105,29 @@ if ($limit -lt 240) { $grace = [int][math]::Floor($limit / 2) }
 $early = [int][math]::Floor($limit / 20)
 
 # One tiny counter file per chat:
-#   "<wake-ups in a row> <switched-off time or 0> <user's messages counted up to this time>"
+#   "<wake-ups in a row> <switched-off time or 0> <wake-ups from outside counted
+#    up to this time> <Cache Saver's own last exit>"
 $stateDir = $env:CACHE_SAVER_STATE_DIR
 if (-not $stateDir) { $stateDir = Join-Path $conf "cache-saver" }
 New-Item -ItemType Directory -Force -Path $stateDir -ErrorAction SilentlyContinue | Out-Null
 $state = Join-Path $stateDir ((Split-Path $File -Leaf) + ".state")
-$count = 0; $stopped = [int64]0; $seen = [int64]0
+$count = 0; $stopped = [int64]0; $seen = [int64]0; $own = [int64]0
 if (Test-Path -LiteralPath $state) {
   $parts = @((Get-Content -LiteralPath $state -TotalCount 1) -split '\s+')
   if ($parts.Count -ge 2 -and $parts[0] -match '^\d+$' -and $parts[1] -match '^\d+$') {
     $count = [int]$parts[0]; $stopped = [int64]$parts[1]
     if ($parts.Count -ge 3 -and $parts[2] -match '^\d+$') { $seen = [int64]$parts[2] }
+    if ($parts.Count -ge 4 -and $parts[3] -match '^\d+$') { $own = [int64]$parts[3] }
   }
 }
 if ($stopped -gt $seen) { $seen = $stopped }       # a counter file from an older version
-function Save-State { Set-Content -LiteralPath $state -Value "$count $stopped $seen" -Encoding ascii -ErrorAction SilentlyContinue }
+function Save-State { Set-Content -LiteralPath $state -Value "$count $stopped $seen $own" -Encoding ascii -ErrorAction SilentlyContinue }
 
-# Is the user back? Read mode: a user message newer than the ones already
-# counted. Fallback mode: the file changed well after $since (a start or a stop).
+# Did something wake the chat? Read mode: a wake-up from outside newer than the
+# ones already counted, and not Cache Saver's own. Fallback mode: the file
+# changed well after $since (a start or a stop).
 function Test-UserBack($times, [int64]$since) {
-  if ($times[2] -eq "p") { return ($times[1] -gt $script:seen) }
+  if ($times[2] -eq "p") { return ($times[1] -gt $script:seen -and $times[1] -gt ($script:own + $grace)) }
   return ($times[1] -gt ($since + $grace))
 }
 function Reset-Fresh($times) {
@@ -134,13 +139,13 @@ function Reset-Fresh($times) {
 $start = Get-Epoch (Get-Date)
 $times = Get-Times
 if ($null -eq $times) { Write-Output "cache-saver: cannot read the chat's times"; exit 2 }
-# No record yet of which messages were counted (first run, or an older counter
-# file): the messages already there are old news, not the user coming back.
+# No record yet of which wake-ups were counted (first run, or an older counter
+# file): the ones already there are old news, not a new wake-up.
 if ($times[2] -eq "p" -and $seen -eq 0) { $seen = [int64]$times[1] }
 if ($stopped -gt 0) {
   if (Test-UserBack $times $stopped) { Reset-Fresh $times }
   else {
-    Write-Output "CACHE SAVER: still switched off (it already spent about one cold restart's worth). Do NOT start it again until the user is back and asks."
+    Write-Output "CACHE SAVER: still switched off (it already spent about one cold restart's worth). Do NOT start it again until something new wakes this chat (the user, another chat, or a finished job)."
     exit 3
   }
 } elseif ($times[2] -eq "p" -and (Test-UserBack $times $start)) { Reset-Fresh $times }
@@ -155,20 +160,20 @@ if ($MaxNudges -gt 0) {
 while ($true) {
   $times = Get-Times
   if ($null -eq $times) { Write-Output "cache-saver: cannot read the chat's times -- stopping"; exit 2 }
-  if (Test-UserBack $times $start) { Reset-Fresh $times }   # the user is back: the count starts again
+  if (Test-UserBack $times $start) { Reset-Fresh $times }   # something woke the chat: the count starts again
   $now = Get-Epoch (Get-Date)
   $last = [math]::Min([int64]$times[0], $now)       # the cache's hour runs from the request's START
   $age = $now - $last
   if ($age -ge $limit) {
     if ($MaxNudges -gt 0 -and ($count + 1) -ge $MaxNudges) {
       $count++                                   # this last wake-up is the stop note itself
-      $stopped = $now; if ($seen -lt $now) { $seen = $now }; Save-State
+      $stopped = $now; $own = $now; if ($seen -lt $now) { $seen = $now }; Save-State
       if ($times[2] -eq "p" -and $times[1] -gt 0) { $away = $now - $times[1] } else { $away = ($count - 1) * $limit + $age }
       $hrs = [int][math]::Floor(($away + 1800) / 3600); if ($hrs -lt 1) { $hrs = 1 }
-      Write-Output ("CACHE SAVER: switched off at wake-up $count of $MaxNudges (about $hrs hour(s) with no messages from the user). Keeping it on any longer would cost more usage than one fresh restart, so it stopped to save the user's usage. Do NOT start it again. Write the user a short note they will see when they come back: Cache Saver switched itself off after about $hrs quiet hour(s) because leaving it on would have cost more than it saves; their next message will re-read the chat once, and Cache Saver turns itself back on then. When the user sends that next message, start Cache Saver again and mention it in one line.")
+      Write-Output ("CACHE SAVER: switched off at wake-up $count of $MaxNudges (about $hrs hour(s) with nothing waking the chat). Keeping it on any longer would cost more usage than one fresh restart, so it stopped to save the user's usage. Do NOT start it again. Write the user a short note they will see when they come back: Cache Saver switched itself off after about $hrs quiet hour(s) because leaving it on would have cost more than it saves; the next message will re-read the chat once, and Cache Saver turns itself back on then. The next time anything wakes this chat (the user, another chat, or a finished job), start Cache Saver again and mention it in one line.")
       exit 3
     }
-    $count++; Save-State
+    $count++; $own = $now; Save-State
     if ($MaxNudges -gt 0) { $n = "wake-up $count of $MaxNudges" } else { $n = "nudge $count" }
     Write-Output "CACHE SAVER: ${age}s quiet ($n) -- reply with exactly this one line so the user knows why you woke: `"Cache Saver: kept your chat warm ($n).`" Then start Cache Saver again."
     exit 0

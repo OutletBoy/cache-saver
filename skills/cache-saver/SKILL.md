@@ -1,6 +1,6 @@
 ---
 name: cache-saver
-description: Cache Saver (Cash Saver) keeps a Claude Code chat's prompt cache warm while the user steps away, so their 5-hour window and weekly limit last longer, and switches itself off at the break-even point. Use when the user asks to start or stop Cache Saver, mentions keeping the cache warm, stepping away, a break, lunch, a meeting, going to bed or leaving for a while, asks how to save usage or limits, or asks any question about how Cache Saver works, what it saves, or when to use it.
+description: Cache Saver (Cash Saver) keeps a Claude Code chat's prompt cache warm while the user steps away or while the chat waits in an autonomous loop, so their 5-hour window and weekly limit last longer, and switches itself off at the break-even point. Use when the user asks to start or stop Cache Saver, mentions keeping the cache warm, stepping away, a break, lunch, a meeting, going to bed or leaving for a while, asks how to save usage or limits, or asks any question about how Cache Saver works, what it saves, or when to use it.
 ---
 
 # Cache Saver (Cash Saver) for Claude Code
@@ -46,13 +46,14 @@ Then tell the user in one line that Cache Saver is on, and that they can say "st
   clear note they will see when they come back, as the line asks: it switched itself off after about
   that many quiet hours because staying on would have cost more usage than one fresh restart; their
   next message re-reads the chat once; Cache Saver turns itself back on then.
-- **Exit 3, `still switched off`**: do not start it again until the user is back.
+- **Exit 3, `still switched off`**: do not start it again until something new wakes this chat.
 
-## When the user comes back after it switched itself off
+## When something wakes the chat after it switched itself off
 
-It switched off only because the user was away. So on the user's **next message**, start it again
-yourself, without asking, and add one short line to your answer, for example: "Welcome back. Cache
-Saver switched off while you were away to save usage; it is back on now." Asking would only add a
+It switched off only because nothing had woken the chat for about 16 hours. So the **next time
+anything wakes it** (the user's message, another chat's message in a loop, or a finished background
+job), start it again yourself, without asking, and add one short line to your answer, for example:
+"Cache Saver switched off during the quiet stretch to save usage; it is back on now." Asking would only add a
 question to every return, and a returning user is exactly who Cache Saver is for.
 
 Do NOT turn it back on when:
@@ -123,8 +124,9 @@ a huge chat.
 It reads only two things from each entry of the chat's record: its kind (the user's message or your
 reply) and its time. It never uses the chat's words. If a long turn worries the user: each tool use
 is its own short request that restarts the hour, so a turn that runs for hours keeps itself warm,
-and Cache Saver times from the last request's start. Only a message the USER sends counts as "the
-user is back"; your own replies and background-task wake-ups never do. It cannot help while you
+and Cache Saver times from the last request's start. Anything that wakes the chat from
+outside (the user, another chat, a finished job) starts the count again, so loops save with nobody
+at the keyboard; Cache Saver's own nudges and your tool results never do. It cannot help while you
 are stuck inside ONE step that runs for over an hour (a very long command or helper agent): suggest
 running such jobs in the background. When unsure, it always errs toward nudging a little early,
 never late. It writes one tiny
@@ -138,7 +140,7 @@ If the user wants it on in every chat, offer to add this to their project's `CLA
 ```markdown
 ## Cache Saver
 At the start of every session, start Cache Saver (the cache-saver skill) as a background task.
-Every time it finishes, do what its last line says. If it switched itself off while I was away,
-start it again when I come back. If I stopped it myself, or I say I will be away for more than
-about 16 hours, leave it off.
+Every time it finishes, do what its last line says. If it switched itself off, start it again the
+next time anything wakes this chat (me, another chat, or a finished job). If I stopped it myself,
+or I say I will be away for more than about 16 hours, leave it off.
 ```

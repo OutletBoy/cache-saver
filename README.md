@@ -14,12 +14,14 @@
 ![Mac | Linux | Windows](https://img.shields.io/badge/works%20on-Mac%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)
 [![GitHub stars](https://img.shields.io/github/stars/OutletBoy/cache-saver?style=social)](https://github.com/OutletBoy/cache-saver/stargazers)
 
-Keep your Claude Code chat warm while you step away,<br>
-so your **5-hour window** and **weekly limit** last much longer.
+Keep your Claude Code chats warm while they wait: while you step away,<br>
+or while an **autonomous loop** runs with nobody at the keyboard.<br>
+Your **5-hour window** and **weekly limit** last much longer.
 
 ## Up to 89% less usage when you come back from a break.
 
-**Running autonomous loops? The savings multiply:** every chat that waits stays warm.
+**Running autonomous loops? The savings multiply.** You never have to come back: every chat that
+waits for another chat or a long job stays warm, and saves the moment it is woken.
 
 [Quick start](#quick-start-1-minute) · [How much you save](#how-much-you-save) · [Loops](#running-a-loop-with-several-chats-this-is-where-it-saves-the-most) · [How it works](#how-it-works) · [Just ask Claude](#just-ask-claude) · [FAQ](#faq)
 
@@ -53,9 +55,9 @@ ask Claude to add it for you:
 ```markdown
 ## Cache Saver
 At the start of every session, start Cache Saver (the cache-saver skill) as a background task.
-Every time it finishes, do what its last line says. If it switched itself off while I was away,
-start it again when I come back. If I stopped it myself, or I say I will be away for more than
-about 16 hours, leave it off.
+Every time it finishes, do what its last line says. If it switched itself off, start it again the
+next time anything wakes this chat (me, another chat, or a finished job). If I stopped it myself,
+or I say I will be away for more than about 16 hours, leave it off.
 ```
 
 Now it is on in every chat, and Claude follows the 16-hour rule for you.
@@ -210,8 +212,8 @@ Add an overnight wait for the whole team and the saving grows again.
 > *Cache Saver switched itself off after about 16 quiet hours, because leaving it on would have cost
 > more than it saves. Your next message will re-read the chat once, and Cache Saver turns itself back on.*
 
-6. **When you come back**, Claude turns it back on by itself and tells you in one line. No question
-   to answer. It only stays off if **you** stopped it, or you say you are leaving for longer.
+6. **The next time anything wakes the chat** (you, another chat in a loop, or a finished job),
+   Claude turns it back on by itself and says so in one line. No question to answer. It only stays off if **you** stopped it, or you say you are leaving for longer.
 
 **Why stop there?** Every nudge is a small cost paid in case you come back soon; a cold restart is one
 big cost. Cache Saver keeps paying the small cost only until the total reaches the big one, then
@@ -339,9 +341,10 @@ just keeps waiting; its clock only runs once Claude goes quiet. The last request
 seconds before the turn ends: we measured over 60,000 real replies, and 99.9% finish within 2.3
 minutes of starting. Timing from the start makes the rare slow one safe too.
 
-It also knows the difference between **you** and Claude. Only a message you send counts as "you are
-back". Claude's own replies and background jobs finishing do not, so the switch-off point stays right
-even in a chat that keeps itself busy.
+It also knows what counts as the chat being used. Your message, another chat's message in a loop,
+or a background job finishing all wake the chat and use the warm cache, so each one starts the count
+again: a loop saves with nobody at the keyboard. Cache Saver's own nudges do not count, so the
+switch-off point stays right when nothing is happening.
 
 We also measured the hour itself: replies sent up to 60 minutes after the last one were always warm,
 and every one after 62 minutes was cold. If it cannot read the times (an unusual setup), it falls back

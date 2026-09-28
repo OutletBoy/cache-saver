@@ -9,7 +9,8 @@ case "$READER" in ''|json) unset CACHE_SAVER_PARSER ;; *) export CACHE_SAVER_PAR
 mkdir -p "$W/state"
 iso() { date -u -d "@$1" +%Y-%m-%dT%H:%M:%S.123Z; }
 # U = tool result, H = the user's message (marked human), T = background-task wake-up (marked),
-# O = the user's message from an older Claude Code (no mark), N = an older wake-up (no mark),
+# X = another chat's message (a loop), O = the user's message from an older Claude Code (no mark),
+# N = an older wake-up (no mark),
 # A = Claude's reply, M = a metadata line.
 U() { printf '{"parentUuid":null,"isSidechain":%s,"promptId":"p","type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"x \\"type\\":\\"assistant\\""}]},"uuid":"u","timestamp":"%s"}\n' "${2:-false}" "$(iso "$1")"; }
 H() { printf '{"parentUuid":null,"isSidechain":false,"promptId":"p","type":"user","message":{"role":"user","content":"hello"},"uuid":"h","timestamp":"%s","origin":{"kind":"human"}}\n' "$(iso "$1")"; }
@@ -17,6 +18,7 @@ T() { printf '{"parentUuid":null,"isSidechain":false,"promptId":"p","type":"user
 O() { printf '{"parentUuid":null,"isSidechain":false,"type":"user","message":{"role":"user","content":[{"type":"text","text":"hello"}]},"uuid":"o","timestamp":"%s"}\n' "$(iso "$1")"; }
 N() { printf '{"parentUuid":null,"isSidechain":false,"type":"user","message":{"role":"user","content":"<task-notification>done</task-notification>"},"uuid":"n","timestamp":"%s"}\n' "$(iso "$1")"; }
 A() { printf '{"parentUuid":"u","isSidechain":%s,"message":{"model":"%s","id":"m","type":"message","role":"assistant","content":[{"type":"text","text":"hi"}],"usage":{"input_tokens":1}},"requestId":"r","type":"assistant","uuid":"a","timestamp":"%s"}\n' "${2:-false}" "${3:-claude-x}" "$(iso "$1")"; }
+X() { printf '{"parentUuid":null,"isSidechain":false,"type":"user","message":{"role":"user","content":"<cross-session-message>next job</cross-session-message>"},"uuid":"x","timestamp":"%s","origin":{"kind":"peer"}}\n' "$(iso "$1")"; }
 M() { printf '{"type":"frame-link","sessionId":"s","timestamp":"%s"}\n' "$(iso "$1")"; }
 run() {  # run <file> <timeout-seconds>; prints "<exit> <elapsed> <last line>"
   local t0=$(date +%s) out rc
@@ -54,9 +56,15 @@ check E-error-reply "$(run $f 30)" 0 20 0 "quiet"
 # F: an interrupt note after the reply does not move the request start
 n=$(date +%s); f=$W/f.jsonl; { U $((n-70)); A $((n-65)); U $((n-3)); } > $f
 check F-interrupt "$(run $f 30)" 0 20 0 "quiet"
-# K: a background-task wake-up after the switch-off is NOT the user coming back
-n=$(date +%s); f=$W/k.jsonl; { H $((n-5000)); A $((n-4990)); T $((n-2)); A $((n-1)); } > $f; st k.jsonl "17 $((n-100)) $((n-100))"
-check K-wakeup-not-user "$(run $f 30)" 3 20 0 "still switched off"
+# K: Cache Saver's OWN stop-note wake-up does not turn it back on
+n=$(date +%s); f=$W/k.jsonl; { H $((n-5000)); A $((n-4990)); T $((n-97)); A $((n-95)); } > $f; st k.jsonl "17 $((n-100)) $((n-100)) $((n-100))"
+check K-own-wakeup-stays-off "$(run $f 30)" 3 20 0 "still switched off"
+# K2: a finished background job later on DOES wake the chat: it turns back on
+n=$(date +%s); f=$W/k2.jsonl; { H $((n-5000)); A $((n-4990)); T $((n-2)); A $((n-1)); } > $f; st k2.jsonl "17 $((n-100)) $((n-100)) $((n-100))"
+check K2-job-wakes-it "$(run $f 8)" 124 12 5 "0 so far"
+# K3: another chat's message (an autonomous loop, nobody at the keyboard) turns it back on
+n=$(date +%s); f=$W/k3.jsonl; { H $((n-5000)); A $((n-4990)); X $((n-2)); A $((n-1)); } > $f; st k3.jsonl "17 $((n-100)) $((n-100)) $((n-100))"
+check K3-loop-wakes-it "$(run $f 8)" 124 12 5 "0 so far"
 # L: the user's own message after the switch-off turns it back on
 n=$(date +%s); f=$W/l.jsonl; { H $((n-5000)); A $((n-4990)); H $((n-2)); A $((n-1)); } > $f; st l.jsonl "17 $((n-100)) $((n-100))"
 check L-user-back "$(run $f 8)" 124 12 5 "0 so far"
@@ -69,9 +77,15 @@ check P-user-restarts-count "$(run $f 30)" 0 20 0 "wake-up 1 of 17"
 # Q: an older Claude Code (no marks): a plain message counts as the user...
 n=$(date +%s); f=$W/q.jsonl; { O $((n-80)); A $((n-75)); } > $f; st q.jsonl "5 0 $((n-5000))"
 check Q-old-version-user "$(run $f 30)" 0 20 0 "wake-up 1 of 17"
-# R: ...and an unmarked wake-up does not
+# R: ...and so does an unmarked wake-up from a finished job
 n=$(date +%s); f=$W/r.jsonl; { O $((n-5000)); A $((n-4990)); N $((n-80)); A $((n-75)); } > $f; st r.jsonl "5 0 $((n-5000))"
-check R-old-version-wakeup "$(run $f 30)" 0 20 0 "wake-up 6 of 17"
+check R-old-version-wakeup "$(run $f 30)" 0 20 0 "wake-up 1 of 17"
+# V: Cache Saver's OWN nudge wake-up keeps the count going
+n=$(date +%s); f=$W/v.jsonl; { H $((n-5000)); A $((n-4990)); T $((n-80)); A $((n-75)); } > $f; st v.jsonl "5 0 $((n-5000)) $((n-82))"
+check V-own-nudge-keeps-count "$(run $f 30)" 0 20 0 "wake-up 6 of 17"
+# W: in a loop, another chat's message restarts the count with no human at all
+n=$(date +%s); f=$W/w.jsonl; { H $((n-5000)); A $((n-4990)); X $((n-80)); A $((n-75)); } > $f; st w.jsonl "5 0 $((n-5000)) $((n-3000))"
+check W-loop-restarts-count "$(run $f 30)" 0 20 0 "wake-up 1 of 17"
 # S: a counter file from an older version (two numbers) stays switched off
 n=$(date +%s); f=$W/s.jsonl; { H $((n-300)); A $((n-290)); } > $f; st s.jsonl "17 $((n-100))"
 check S-old-counter-file "$(run $f 30)" 3 20 0 "still switched off"

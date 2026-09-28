@@ -48,11 +48,12 @@ mtime() { stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null; }
 #                    not when its reply ends. The request behind the newest reply
 #                    went out right after the newest entry before that reply (a
 #                    message, a tool result, or a background-task wake-up).
-#   human time    -- the newest message the USER sent. Only this means "the user
-#                    is back"; Claude's own replies and background-task wake-ups
-#                    never do. Claude Code marks each message with where it came
-#                    from; older versions without that mark fall back to the kind
-#                    of entry (a tool result or a wake-up is never the user).
+#   wake time     -- the newest entry that woke the chat from outside: the user's
+#                    message, another chat's message, or a finished background job.
+#                    Any of these means the kept-warm cache got used, so the count
+#                    starts again: an autonomous loop saves with nobody at the
+#                    keyboard. Tool results are Claude's own work and never count;
+#                    Cache Saver's OWN wake-up is told apart by its time (below).
 # Side-chats (subagents) and error replies are skipped. Uses node, jq or python,
 # whichever is present; with none, the file's modified time stands in for both.
 NODE_JS='let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{let u=0,r=0,h=0,a=0;
@@ -61,15 +62,13 @@ if(!o||typeof o!=="object"||o.isSidechain||typeof o.timestamp!=="string")continu
 const t=Math.floor(Date.parse(o.timestamp)/1000);if(!(t>0))continue;const m=(o.message&&typeof o.message==="object")?o.message:{};
 if(o.type==="user"){u=t;a=t;if(human(o,m))h=t}else if(o.type==="assistant"&&m.usage&&m.model!=="<synthetic>"){if(u)r=u;a=t}}
 if(a)console.log((r||u||a)+" "+h)});
-function human(o,m){if(o.origin&&typeof o.origin==="object")return o.origin.kind==="human";
-if(o.isMeta||o.isCompactSummary)return false;const c=m.content;
+function human(o,m){if(o.isMeta||o.isCompactSummary)return false;const c=m.content;
 if(Array.isArray(c))return !c.some(x=>x&&x.type==="tool_result");
-return typeof c==="string"&&!c.startsWith("<task-notification>")}'
-JQ_PROG='def human: if (.origin | type) == "object" then .origin.kind == "human"
-    elif .isMeta == true or .isCompactSummary == true then false
+return typeof c==="string"}'
+JQ_PROG='def human: if .isMeta == true or .isCompactSummary == true then false
     elif (.message | type) != "object" then false
     elif (.message.content | type) == "array" then ([.message.content[] | select(type == "object" and .type == "tool_result")] | length) == 0
-    elif (.message.content | type) == "string" then (.message.content | startswith("<task-notification>") | not)
+    elif (.message.content | type) == "string" then true
     else false end;
   reduce (inputs | fromjson? | select(type == "object" and (.isSidechain | not) and (.timestamp | type) == "string")) as $o
   ({u: 0, r: 0, h: 0, a: 0};
@@ -82,14 +81,12 @@ JQ_PROG='def human: if (.origin | type) == "object" then .origin.kind == "human"
   | if .a > 0 then "\(if .r > 0 then .r elif .u > 0 then .u else .a end) \(.h)" else empty end'
 PY_PROG='import sys, json, datetime
 def human(o, m):
-    if isinstance(o.get("origin"), dict):
-        return o["origin"].get("kind") == "human"
     if o.get("isMeta") or o.get("isCompactSummary"):
         return False
     c = m.get("content")
     if isinstance(c, list):
         return not any(isinstance(x, dict) and x.get("type") == "tool_result" for x in c)
-    return isinstance(c, str) and not c.startswith("<task-notification>")
+    return isinstance(c, str)
 u = r = h = a = 0
 for l in sys.stdin.buffer.read().decode("utf-8", "replace").split("\n"):
     try:
@@ -160,8 +157,9 @@ if [ ! -f "$FILE" ]; then echo "cache-saver: file not found: $FILE"; exit 2; fi
 LIMIT=$(( MINUTES * 60 ))
 # Test hook: a limit in seconds, so the tests do not wait an hour.
 if isnum "${CACHE_SAVER_TEST_SECONDS:-}"; then LIMIT="$CACHE_SAVER_TEST_SECONDS"; fi
-# Fallback only (the record could not be read): changes to the chat this long
-# after a start are Claude's own restart; later changes mean the user is back.
+# Entries this soon after Cache Saver's own exit are its own wake-up and
+# Claude's reply to it, never someone waking the chat. (In the fallback: changes
+# this long after a start are Claude's own restart.)
 GRACE=120
 if [ "$LIMIT" -lt 240 ]; then GRACE=$(( LIMIT / 2 )); fi
 # Fallback only: the modified time is when the reply ENDED, a little after its
@@ -170,25 +168,28 @@ if [ "$LIMIT" -lt 240 ]; then GRACE=$(( LIMIT / 2 )); fi
 EARLY=$(( LIMIT / 20 ))
 
 # One tiny counter file per chat:
-#   "<wake-ups in a row> <switched-off time or 0> <user's messages counted up to this time>"
+#   "<wake-ups in a row> <switched-off time or 0> <wake-ups from outside counted
+#    up to this time> <Cache Saver's own last exit>"
 STATE_DIR="${CACHE_SAVER_STATE_DIR:-$CONF/cache-saver}"
 mkdir -p "$STATE_DIR" 2>/dev/null
 STATE="$STATE_DIR/$(basename "$FILE").state"
-COUNT=0; STOPPED=0; SEEN=0
-if [ -f "$STATE" ]; then read -r COUNT STOPPED SEEN < "$STATE"; fi
+COUNT=0; STOPPED=0; SEEN=0; OWN=0
+if [ -f "$STATE" ]; then read -r COUNT STOPPED SEEN OWN < "$STATE"; fi
 isnum "$COUNT" || COUNT=0
 isnum "$STOPPED" || STOPPED=0
 isnum "$SEEN" || SEEN=0
+isnum "$OWN" || OWN=0
 [ "$STOPPED" -gt "$SEEN" ] && SEEN=$STOPPED   # a counter file from an older version
-save() { printf '%s %s %s\n' "$COUNT" "$STOPPED" "$SEEN" > "$STATE" 2>/dev/null; }
+save() { printf '%s %s %s %s\n' "$COUNT" "$STOPPED" "$SEEN" "$OWN" > "$STATE" 2>/dev/null; }
 
-# Is the user back? Read mode: a user message newer than the ones already
-# counted. Fallback mode: the file changed well after $1 (a start or a stop).
+# Did something wake the chat? Read mode: a wake-up from outside newer than the
+# ones already counted, and not Cache Saver's own. Fallback mode: the file
+# changed well after $1 (a start or a stop).
 user_back() {
-  if [ "$mode" = p ]; then [ "$human" -gt "$SEEN" ]
+  if [ "$mode" = p ]; then [ "$human" -gt "$SEEN" ] && [ "$human" -gt $(( OWN + GRACE )) ]
   else [ "$human" -gt $(( $1 + GRACE )) ]; fi
 }
-fresh() {  # the user is back: start the count again
+fresh() {  # something woke the chat: start the count again
   COUNT=0; STOPPED=0
   if [ "$mode" = p ]; then SEEN=$human; else SEEN=$(date +%s); fi
   save
@@ -199,13 +200,13 @@ read -r req human mode <<EOF
 $(times "$FILE")
 EOF
 if [ -z "$req" ]; then echo "cache-saver: cannot read the chat's times"; exit 2; fi
-# No record yet of which messages were counted (first run, or an older counter
-# file): the messages already there are old news, not the user coming back.
+# No record yet of which wake-ups were counted (first run, or an older counter
+# file): the ones already there are old news, not a new wake-up.
 [ "$mode" = p ] && [ "$SEEN" -eq 0 ] && SEEN=$human
 if [ "$STOPPED" -gt 0 ]; then
   if user_back "$STOPPED"; then fresh
   else
-    echo "CACHE SAVER: still switched off (it already spent about one cold restart's worth). Do NOT start it again until the user is back and asks."
+    echo "CACHE SAVER: still switched off (it already spent about one cold restart's worth). Do NOT start it again until something new wakes this chat (the user, another chat, or a finished job)."
     exit 3
   fi
 elif [ "$mode" = p ] && user_back; then fresh
@@ -222,7 +223,7 @@ while true; do
 $(times "$FILE")
 EOF
   if [ -z "$req" ]; then echo "cache-saver: cannot read the chat's times -- stopping"; exit 2; fi
-  if user_back "$START"; then fresh; fi  # the user is back: the count starts again
+  if user_back "$START"; then fresh; fi  # something woke the chat: the count starts again
   now=$(date +%s)
   [ "$req" -gt "$now" ] && req=$now     # a clock that jumped back
   last=$req                             # the cache's hour runs from the request's START
@@ -230,13 +231,13 @@ EOF
   if [ "$age" -ge "$LIMIT" ]; then
     if [ "$MAX_NUDGES" -gt 0 ] && [ $(( COUNT + 1 )) -ge "$MAX_NUDGES" ]; then
       COUNT=$(( COUNT + 1 ))            # this last wake-up is the stop note itself
-      STOPPED=$now; [ "$SEEN" -lt "$now" ] && SEEN=$now; save
+      STOPPED=$now; OWN=$now; [ "$SEEN" -lt "$now" ] && SEEN=$now; save
       if [ "$mode" = p ] && [ "$human" -gt 0 ]; then away=$(( now - human )); else away=$(( (COUNT - 1) * LIMIT + now - last )); fi
       hrs=$(( (away + 1800) / 3600 )); [ "$hrs" -lt 1 ] && hrs=1
-      echo "CACHE SAVER: switched off at wake-up $COUNT of $MAX_NUDGES (about $hrs hour(s) with no messages from the user). Keeping it on any longer would cost more usage than one fresh restart, so it stopped to save the user's usage. Do NOT start it again. Write the user a short note they will see when they come back: Cache Saver switched itself off after about $hrs quiet hour(s) because leaving it on would have cost more than it saves; their next message will re-read the chat once, and Cache Saver turns itself back on then. When the user sends that next message, start Cache Saver again and mention it in one line."
+      echo "CACHE SAVER: switched off at wake-up $COUNT of $MAX_NUDGES (about $hrs hour(s) with nothing waking the chat). Keeping it on any longer would cost more usage than one fresh restart, so it stopped to save the user's usage. Do NOT start it again. Write the user a short note they will see when they come back: Cache Saver switched itself off after about $hrs quiet hour(s) because leaving it on would have cost more than it saves; the next message will re-read the chat once, and Cache Saver turns itself back on then. The next time anything wakes this chat (the user, another chat, or a finished job), start Cache Saver again and mention it in one line."
       exit 3
     fi
-    COUNT=$(( COUNT + 1 )); save
+    COUNT=$(( COUNT + 1 )); OWN=$now; save
     if [ "$MAX_NUDGES" -gt 0 ]; then n="wake-up $COUNT of $MAX_NUDGES"; else n="nudge $COUNT"; fi
     echo "CACHE SAVER: ${age}s quiet ($n) -- reply with exactly this one line so the user knows why you woke: \"Cache Saver: kept your chat warm ($n).\" Then start Cache Saver again."
     exit 0
