@@ -1,0 +1,144 @@
+---
+name: cache-saver
+description: Cache Saver (Cash Saver) keeps a Claude Code chat's prompt cache warm while the user steps away, so their 5-hour window and weekly limit last longer, and switches itself off at the break-even point. Use when the user asks to start or stop Cache Saver, mentions keeping the cache warm, stepping away, a break, lunch, a meeting, going to bed or leaving for a while, asks how to save usage or limits, or asks any question about how Cache Saver works, what it saves, or when to use it.
+---
+
+# Cache Saver (Cash Saver) for Claude Code
+
+You are the user's guide to Cache Saver. Start it, stop it, follow its output, and answer their
+questions about it in plain, friendly words. The user may be a beginner.
+
+## What it is, in one breath
+
+Claude Code keeps a saved copy of the chat (the prompt cache) for about 1 hour on subscription plans.
+After that, the next message re-reads the whole chat at about 2x the normal input rate, instead of
+0.1x from a warm cache. Cache Saver is a tiny script that runs as a background task, waits until 55
+minutes after your last request STARTED (the cache's hour restarts when a request starts, not when
+the reply ends), then exits. That wakes you; you reply with one short line, which
+refreshes the cache for another hour; then you start it again.
+
+## How to start it
+
+Run this as a BACKGROUND task (the script sits in this skill's folder). Replace `WORD` with a
+fresh random word you make up every time you start it (letters and digits, 8 or more, for example
+`cs-k4w9p2qx`):
+
+```bash
+bash ~/.claude/skills/cache-saver/cache-saver.sh --find-me WORD
+```
+
+The word is written into this chat's own record the moment you run the command, so Cache Saver finds
+and watches THIS chat, even when the user runs several chats at once. If it says no chat or several
+chats contain the word, start it again with a new word.
+
+(If the user set `CLAUDE_CONFIG_DIR`, the folder is `$CLAUDE_CONFIG_DIR/skills/cache-saver/`. On
+Windows without bash: `powershell -File <that folder>\cache-saver.ps1`.)
+
+Then tell the user in one line that Cache Saver is on, and that they can say "stop the cache saver".
+
+## Every time it finishes: do what its last line says
+
+- **Exit 0, a line starting `CACHE SAVER: ... quiet (wake-up N of 17)`**: reply with exactly the one line
+  it gives, such as "Cache Saver: kept your chat warm (wake-up 3 of 17).", so the user can see why
+  you woke, and start it again as a background task. Keep
+  this reply short; it is what refreshes the cache.
+- **Exit 3, `CACHE SAVER: switched off at wake-up ...`**: do NOT start it again. Write the user a short,
+  clear note they will see when they come back, as the line asks: it switched itself off after about
+  that many quiet hours because staying on would have cost more usage than one fresh restart; their
+  next message re-reads the chat once; Cache Saver turns itself back on then.
+- **Exit 3, `still switched off`**: do not start it again until the user is back.
+
+## When the user comes back after it switched itself off
+
+It switched off only because the user was away. So on the user's **next message**, start it again
+yourself, without asking, and add one short line to your answer, for example: "Welcome back. Cache
+Saver switched off while you were away to save usage; it is back on now." Asking would only add a
+question to every return, and a returning user is exactly who Cache Saver is for.
+
+Do NOT turn it back on when:
+- **the user stopped it themselves** ("stop the cache saver"): it stays off until they ask again;
+- the user's message says they are leaving for **more than about 16 hours** (suggest leaving it off);
+- the user says they are **done with this chat**.
+- **Exit 2 (an error)**: tell the user the message in plain words and do not loop. A common one is
+  "no chat transcript found": pass the chat file with `--file`.
+
+## Things that stop it silently (help the user with these)
+
+It dies with the chat: closing the chat, terminal, or Claude Code; a computer restart, shutdown,
+crash, or Claude Code update; `/clear` or a new chat (it was watching the old one); and sometimes a
+compaction. It also cannot keep the cache warm while the computer is asleep or offline, while you are
+waiting for the user to approve a command (suggest "always allow" for it), or once the usage limit is
+hit. If the user asks "is Cache Saver on?", check whether its background task is still running and
+say so plainly; if it is not, offer to start it. Recommend the `CLAUDE.md` block below so it starts
+in every new chat by itself.
+
+## How to stop it
+
+When the user says "stop the cache saver" (or anything like it), stop the background task and do not
+start it again. Closing the chat also stops it.
+
+## The one rule (use it for every recommendation)
+
+- Back within **about 16 hours**: leave it on. It always saves.
+- Away **longer** (a weekend, a trip): turn it off before going. It also switches itself off at its 17th
+  wake-up in a row (about 16 quiet hours): instead of a 17th nudge, that wake-up is your note to the
+  user. The nudges then total about one cold restart, the most it can ever cost extra (the classic
+  rent-or-buy strategy: keep paying the small cost until it adds up to the big one, then stop).
+- **Not worth it** for short chats (re-reading is cheap anyway), or a chat the user is done with.
+- If the user says they are leaving for longer than about 16 hours, suggest stopping it now.
+
+## The numbers (for questions about savings)
+
+Measured from thousands of real Claude Code turns: one cold restart costs about as much as 18 warm
+nudges. Share of the break's cost that Cache Saver saves:
+
+| Break | Saved |
+|---|---|
+| 1 hour | 89% |
+| 2 hours | 83% |
+| 4 hours | 72% |
+| 8 hours (overnight) | 50% |
+| 12 hours | 22% |
+| 16 hours | about 0% (break-even) |
+| Normal work day (lunch, a meeting, overnight) | about 70% |
+
+The first message back is about 18 times cheaper. Bigger chats save more in absolute terms. Anthropic
+does not publish how many tokens one percent of a subscription limit is, so savings are a share of
+what the break would have cost. On the pay-per-token API the same percentages apply to the bill.
+
+## Options
+
+| Option | What it does | Default |
+|---|---|---|
+| `--minutes N` | Quiet minutes before a nudge (keep it a few below the cache lifetime) | 55 |
+| `--max-nudges N` | Wake-ups in a row before it switches itself off (the last is the note); 0 = never | 17 |
+| `--find-me WORD` | Watch the chat whose record contains this fresh word (always use it) | |
+| `--file PATH` | Which chat to watch | the most recently changed chat |
+
+With a 5-minute cache (some API setups) use `--minutes 4`; that is only worth it for short breaks in
+a huge chat.
+
+## Safety facts (if the user asks)
+
+It reads only two things from each entry of the chat's record: its kind (the user's message or your
+reply) and its time. It never uses the chat's words. If a long turn worries the user: each tool use
+is its own short request that restarts the hour, so a turn that runs for hours keeps itself warm,
+and Cache Saver times from the last request's start. Only a message the USER sends counts as "the
+user is back"; your own replies and background-task wake-ups never do. It cannot help while you
+are stuck inside ONE step that runs for over an hour (a very long command or helper agent): suggest
+running such jobs in the background. When unsure, it always errs toward nudging a little early,
+never late. It writes one tiny
+counter file per chat (in `~/.claude/cache-saver/`), sends nothing over the internet, and needs no
+keys, passwords, or accounts. Free, MIT license.
+
+## Make it automatic
+
+If the user wants it on in every chat, offer to add this to their project's `CLAUDE.md`:
+
+```markdown
+## Cache Saver
+At the start of every session, start Cache Saver (the cache-saver skill) as a background task.
+Every time it finishes, do what its last line says. If it switched itself off while I was away,
+start it again when I come back. If I stopped it myself, or I say I will be away for more than
+about 16 hours, leave it off.
+```

@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+# Cache Saver behavior tests: request-start timing and "is the user back".
+# Needs GNU date (Linux, Git Bash). Usage: bash tests/run-tests.sh sh|ps1 [reader]   reader: node|jq|py|none (sh), json|none (ps1)
+KIND="$1"; READER="${2:-}"
+D="$(cd "$(dirname "$0")/../skills/cache-saver" && pwd)"
+W=$(mktemp -d)
+export CACHE_SAVER_TEST_SECONDS=60 CACHE_SAVER_STATE_DIR="$W/state"
+case "$READER" in ''|json) unset CACHE_SAVER_PARSER ;; *) export CACHE_SAVER_PARSER="$READER" ;; esac
+mkdir -p "$W/state"
+iso() { date -u -d "@$1" +%Y-%m-%dT%H:%M:%S.123Z; }
+# U = tool result, H = the user's message (marked human), T = background-task wake-up (marked),
+# O = the user's message from an older Claude Code (no mark), N = an older wake-up (no mark),
+# A = Claude's reply, M = a metadata line.
+U() { printf '{"parentUuid":null,"isSidechain":%s,"promptId":"p","type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"x \\"type\\":\\"assistant\\""}]},"uuid":"u","timestamp":"%s"}\n' "${2:-false}" "$(iso "$1")"; }
+H() { printf '{"parentUuid":null,"isSidechain":false,"promptId":"p","type":"user","message":{"role":"user","content":"hello"},"uuid":"h","timestamp":"%s","origin":{"kind":"human"}}\n' "$(iso "$1")"; }
+T() { printf '{"parentUuid":null,"isSidechain":false,"promptId":"p","type":"user","message":{"role":"user","content":"<task-notification>done</task-notification>"},"uuid":"t","timestamp":"%s","origin":{"kind":"task-notification"}}\n' "$(iso "$1")"; }
+O() { printf '{"parentUuid":null,"isSidechain":false,"type":"user","message":{"role":"user","content":[{"type":"text","text":"hello"}]},"uuid":"o","timestamp":"%s"}\n' "$(iso "$1")"; }
+N() { printf '{"parentUuid":null,"isSidechain":false,"type":"user","message":{"role":"user","content":"<task-notification>done</task-notification>"},"uuid":"n","timestamp":"%s"}\n' "$(iso "$1")"; }
+A() { printf '{"parentUuid":"u","isSidechain":%s,"message":{"model":"%s","id":"m","type":"message","role":"assistant","content":[{"type":"text","text":"hi"}],"usage":{"input_tokens":1}},"requestId":"r","type":"assistant","uuid":"a","timestamp":"%s"}\n' "${2:-false}" "${3:-claude-x}" "$(iso "$1")"; }
+M() { printf '{"type":"frame-link","sessionId":"s","timestamp":"%s"}\n' "$(iso "$1")"; }
+run() {  # run <file> <timeout-seconds>; prints "<exit> <elapsed> <last line>"
+  local t0=$(date +%s) out rc
+  if [ "$KIND" = sh ]; then out=$(timeout "$2" bash "$D/cache-saver.sh" --file "$1" < /dev/null); rc=$?
+  else out=$(timeout "$2" powershell -NoProfile -ExecutionPolicy Bypass -File "$(cygpath -w "$D/cache-saver.ps1")" -File "$(cygpath -w "$1")" < /dev/null); rc=$?; out=$(printf '%s' "$out" | tr -d '\r'); fi
+  echo "$rc $(( $(date +%s) - t0 )) $(printf '%s\n' "$out" | tail -1 | cut -c1-160)"
+}
+pass=0; fail=0
+check() {  # check <name> <result> <want-exit> <max-elapsed> [<min-elapsed>] [<grep>]
+  set -- "$1" "$2" "$3" "$4" "${5:-0}" "${6:-}"
+  local rc=${2%% *} rest=${2#* }; local el=${rest%% *}
+  if [ "$rc" = "$3" ] && [ "$el" -le "$4" ] && [ "$el" -ge "$5" ] && { [ -z "$6" ] || printf '%s' "$2" | grep -q -- "$6"; }; then
+    pass=$((pass+1)); echo "PASS $1: $2"; else fail=$((fail+1)); echo "FAIL $1: $2 (want exit $3, elapsed $5..$4 ${6:+, '$6'})"; fi
+}
+st() { printf '%s\n' "$2" > "$W/state/$1.state"; }
+FALLBACK=no; [ "$READER" = none ] && FALLBACK=yes
+
+if [ $FALLBACK = no ]; then
+n=$(date +%s)
+# A: request started 70 s ago, reply landed 5 s ago -> nudge NOW (timing from the end waited ~55 s)
+f=$W/a.jsonl; { U $((n-70)); A $((n-5)); } > $f
+check A-start-anchor "$(run $f 30)" 0 20 0 "quiet"
+# B: request started 20 s ago -> waits until 60 s after the START (about 40 s)
+n=$(date +%s); f=$W/b.jsonl; { U $((n-20)); A $((n-5)); } > $f
+check B-waits-from-start "$(run $f 90)" 0 55 30 "quiet"
+# C: a later metadata line does not push the timer back
+n=$(date +%s); f=$W/c.jsonl; { U $((n-70)); A $((n-65)); M $n; } > $f
+check C-metadata-ignored "$(run $f 30)" 0 20 0 "quiet"
+# D: a subagent's side-chat entries do not count
+n=$(date +%s); f=$W/d.jsonl; { U $((n-70)); A $((n-65)); U $((n-2)) true; A $((n-1)) true; } > $f
+check D-sidechain-ignored "$(run $f 30)" 0 20 0 "quiet"
+# E: an error reply (no real request) does not count
+n=$(date +%s); f=$W/e.jsonl; { U $((n-70)); A $((n-65)); U $((n-4)); A $((n-3)) false "<synthetic>"; } > $f
+check E-error-reply "$(run $f 30)" 0 20 0 "quiet"
+# F: an interrupt note after the reply does not move the request start
+n=$(date +%s); f=$W/f.jsonl; { U $((n-70)); A $((n-65)); U $((n-3)); } > $f
+check F-interrupt "$(run $f 30)" 0 20 0 "quiet"
+# K: a background-task wake-up after the switch-off is NOT the user coming back
+n=$(date +%s); f=$W/k.jsonl; { H $((n-5000)); A $((n-4990)); T $((n-2)); A $((n-1)); } > $f; st k.jsonl "17 $((n-100)) $((n-100))"
+check K-wakeup-not-user "$(run $f 30)" 3 20 0 "still switched off"
+# L: the user's own message after the switch-off turns it back on
+n=$(date +%s); f=$W/l.jsonl; { H $((n-5000)); A $((n-4990)); H $((n-2)); A $((n-1)); } > $f; st l.jsonl "17 $((n-100)) $((n-100))"
+check L-user-back "$(run $f 8)" 124 12 5 "0 so far"
+# M: Claude's own tool results (for example a slow nudge reply) do not restart the count
+n=$(date +%s); f=$W/m.jsonl; { H $((n-5000)); A $((n-4990)); U $((n-70)); A $((n-65)); } > $f; st m.jsonl "5 0 $((n-5000))"
+check M-own-activity-keeps-count "$(run $f 30)" 0 20 0 "wake-up 6 of 17"
+# P: a new user message restarts the count
+n=$(date +%s); f=$W/p.jsonl; { H $((n-5000)); A $((n-4990)); H $((n-80)); A $((n-75)); } > $f; st p.jsonl "5 0 $((n-5000))"
+check P-user-restarts-count "$(run $f 30)" 0 20 0 "wake-up 1 of 17"
+# Q: an older Claude Code (no marks): a plain message counts as the user...
+n=$(date +%s); f=$W/q.jsonl; { O $((n-80)); A $((n-75)); } > $f; st q.jsonl "5 0 $((n-5000))"
+check Q-old-version-user "$(run $f 30)" 0 20 0 "wake-up 1 of 17"
+# R: ...and an unmarked wake-up does not
+n=$(date +%s); f=$W/r.jsonl; { O $((n-5000)); A $((n-4990)); N $((n-80)); A $((n-75)); } > $f; st r.jsonl "5 0 $((n-5000))"
+check R-old-version-wakeup "$(run $f 30)" 0 20 0 "wake-up 6 of 17"
+# S: a counter file from an older version (two numbers) stays switched off
+n=$(date +%s); f=$W/s.jsonl; { H $((n-300)); A $((n-290)); } > $f; st s.jsonl "17 $((n-100))"
+check S-old-counter-file "$(run $f 30)" 3 20 0 "still switched off"
+fi
+# G: no readable entries -> falls back to the file's modified time
+f=$W/g.jsonl; echo "not json" > $f; touch -d "@$(( $(date +%s) - 70 ))" $f
+check G-fallback-mtime "$(run $f 30)" 0 20 0 "quiet"
+# G2: the fallback leans EARLY: changed 58 s ago with a 60 s limit -> nudges now, not in 2-3 s
+if [ $FALLBACK = yes ]; then
+f=$W/g2.jsonl; echo "x" > $f; touch -d "@$(( $(date +%s) - 58 ))" $f
+check G2-fallback-leans-early "$(run $f 30)" 0 1 0 "quiet"
+fi
+# H: at the last allowed wake-up it switches off
+n=$(date +%s); f=$W/h.jsonl
+if [ $FALLBACK = no ]; then { H $((n-70)); A $((n-65)); } > $f; else echo "x" > $f; touch -d "@$((n-70))" $f; fi
+st h.jsonl "16 0"
+check H-switch-off "$(run $f 30)" 3 20 0 "switched off at wake-up 17"
+# I: still off when nothing new happened
+check I-stays-off "$(run $f 30)" 3 20 0 "still switched off"
+# J: the user came back (a new message after the switch-off) -> starts fresh and waits
+n=$(date +%s); st h.jsonl "17 $((n-100)) $((n-100))"; H $n >> $f; A $((n+1)) >> $f
+check J-user-back "$(run $f 8)" 124 12 5 "0 so far"
+echo "$KIND ${READER:-default}: $pass passed, $fail failed"
+rm -rf "$W"
