@@ -78,7 +78,9 @@ crash, or Claude Code update; `/clear` or a new chat (it was watching the old on
 compaction. It also cannot keep the cache warm while the computer is asleep or offline, while you are
 waiting for the user to approve a command (suggest "always allow" for it), or once the usage limit is
 hit. If the user asks "is Cache Saver on?", check whether its background task is still running and
-say so plainly; if it is not, offer to start it. Recommend the `CLAUDE.md` block below so it starts
+say so plainly; if it is not, offer to start it. Each wake-up adds about 1,000 tokens to the chat (about
+9,000 over a full 8-hour run): if the user is stepping away with the chat almost full (less than
+about 5% left before auto-compact), suggest running `/compact` first, then start Cache Saver again. Recommend the `CLAUDE.md` block below so it starts
 in every new chat by itself.
 
 ## How to stop it

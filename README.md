@@ -87,7 +87,7 @@ The share of what coming back from a break would cost you, saved by Cache Saver:
 | **2 hours** (a meeting) | **67%** | **YES** |
 | 3 hours | **56%** | **YES** |
 | **4 hours** (an afternoon out) | **44%** | **YES** |
-| 6 hours | 22% | yes, a little |
+| 6 hours | 22% | yes, but only a small saving |
 | 8 hours | about 0% | break-even: it switches itself off here |
 | Overnight or longer | costs about one extra restart | turn it off before you go |
 | **A normal work day** (lunch + a meeting) | **about 72%** | **YES** |
@@ -238,7 +238,7 @@ Cache Saver lives inside your Claude Code chat, so anything that stops the chat 
 | **Claude asks you to approve the command** | It cannot restart until you answer | Each start uses a new random word, so allow the script itself: add `Bash(bash ~/.claude/skills/cache-saver/cache-saver.sh:*)` to `permissions.allow` in `~/.claude/settings.json` (or ask Claude to) |
 | **You hit your usage limit** | Claude cannot reply, so it cannot restart it | It comes back after your limit resets; start it again |
 | **Claude waits on ONE step for over an hour** (a single very long command, or a helper agent that runs for hours) | Claude cannot send the nudge until that step ends, so the chat's cache can go cold meanwhile (the helper keeps its own cache warm) | Nothing needed for normal work: steps that each finish within an hour are fine. For very long jobs, run them in the background so Claude stays free |
-| **The chat gets compacted** (`/compact`, or automatically when it gets very long) | Compacting can end background tasks | Ask Claude to start it again |
+| **The chat gets compacted** (`/compact`, or automatically when it gets very long) | Compacting can end background tasks. Each wake-up adds about 1,000 tokens to the chat (about 9,000 for a full 8-hour run), so it rarely causes a compaction, but it can tip a chat that is already almost full | If Claude Code shows less than about 5% context left before auto-compact, run `/compact` before you step away. If it compacts anyway, ask Claude to start it again |
 | **You start a new chat or use `/clear`** | It was watching the old chat | Start it again in the new one |
 | **You run several chats at once** | Without the skill, it watches the chat that changed most recently | Use the skill (it finds its own chat automatically), or `--find-me` |
 
