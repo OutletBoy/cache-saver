@@ -8,6 +8,7 @@
 
 **Saves your cache. Saves your cash.**
 
+[![Tests](https://github.com/OutletBoy/cache-saver/actions/workflows/tests.yml/badge.svg)](https://github.com/OutletBoy/cache-saver/actions/workflows/tests.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 ![Setup: 1 minute](https://img.shields.io/badge/setup-1%20minute-blue.svg)
 ![No install](https://img.shields.io/badge/install-none-brightgreen.svg)
@@ -363,7 +364,7 @@ Yes. `tests/run-tests.sh` checks the timing and the "are you back?" logic with m
 slow replies, long turns, background jobs, loops, wake-ups mid-work, two copies on one chat, finding
 its own chat, error replies, older Claude Code versions, and the fallback (27 checks per reader; 5 in
 the no-reader fallback run). It runs against both scripts and every way they can read the chat
-(`bash tests/run-tests.sh sh [node|jq|py|none]` or `bash tests/run-tests.sh ps1 [json|none]`; needs GNU `date`, as on Linux or Git Bash).
+(`bash tests/run-tests.sh sh [node|jq|py|none]` or `bash tests/run-tests.sh ps1 [json|none]`; needs GNU `date`, as on Linux or Git Bash). Every change is tested automatically on real Linux and macOS.
 
 </details>
 

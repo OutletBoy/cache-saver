@@ -1,0 +1,23 @@
+name: tests
+on: [push, pull_request, workflow_dispatch]
+jobs:
+  sh:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: GNU date and timeout for the test harness only (macOS keeps its own stat and bash)
+        if: runner.os == 'macOS'
+        run: |
+          brew install coreutils jq
+          mkdir -p "$HOME/shim"
+          for t in date timeout touch; do ln -s "$(brew --prefix)/bin/g$t" "$HOME/shim/$t"; done
+          echo "$HOME/shim" >> "$GITHUB_PATH"
+      - run: bash --version | head -1
+      - run: bash tests/run-tests.sh sh node
+      - run: bash tests/run-tests.sh sh jq
+      - run: bash tests/run-tests.sh sh py
+      - run: bash tests/run-tests.sh sh none

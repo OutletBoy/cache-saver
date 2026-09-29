@@ -141,3 +141,4 @@ n=$(date +%s); st h.jsonl "9 $((n-100)) $((n-100))"; H $n >> $f; A $((n+1)) >> $
 check J-user-back "$(run $f 8)" 124 12 5 "0 so far"
 echo "$KIND ${READER:-default}: $pass passed, $fail failed"
 rm -rf "$W"
+[ "$fail" -eq 0 ]
