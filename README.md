@@ -19,6 +19,8 @@ Keep your Claude Code chats warm while they wait: while you step away,<br>
 or while an **autonomous loop** runs with nobody at the keyboard.<br>
 Your **5-hour window** and **weekly limit** last much longer.
 
+<img src="assets/demo.gif" alt="Demo: Cache Saver keeps a Claude Code chat warm during a lunch break, then the user comes back to an instant answer" width="640">
+
 ## Up to 78% less usage when you come back from a break.
 
 **Running autonomous loops? The savings multiply.** You never have to come back: every chat that
