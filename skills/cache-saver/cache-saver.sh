@@ -18,7 +18,8 @@
 #   --file PATH     transcript to watch (default: the newest one Claude Code wrote)
 #
 # Exit codes: 0 = nudge (reply and start again), 3 = switched off, 2 = error,
-#             4 = a newer copy took over this chat (do nothing).
+#             4 = a newer copy took over this chat (do nothing),
+#             5 = the usage limit is reached (start it again after the reset).
 
 MINUTES=55
 MAX_NUDGES=9
@@ -34,7 +35,7 @@ while [ $# -gt 0 ]; do
     --max-nudges) MAX_NUDGES="$2"; shift 2 ;;
     --file) FILE="$2"; shift 2 ;;
     --find-me) FIND="$2"; shift 2 ;;
-    -h|--help) sed -n '2,21p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,22p' "$0"; exit 0 ;;
     *) echo "cache-saver: unknown option $1 (try --help)"; exit 2 ;;
   esac
 done
@@ -61,15 +62,17 @@ mtime() { stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null; }
 #                    starts again: an autonomous loop saves with nobody at the
 #                    keyboard. Entries in the middle of Claude's own work never
 #                    count; Cache Saver's OWN wake-up is told apart by its time.
-# Side-chats (subagents) and error replies are skipped. Uses node, jq or python,
+# Side-chats (subagents) and error replies are skipped; a usage-limit error (Claude
+# Code writes the reset time beside it) is remembered until the next real reply. Uses node, jq or python,
 # whichever is present; with none, the file's modified time stands in for both.
-NODE_JS='let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{let u=0,r=0,h=0,a=0,idle=true;
+NODE_JS='let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{let u=0,r=0,h=0,a=0,idle=true,L=0;
 for(const l of d.split("\n")){let o;try{o=JSON.parse(l)}catch(e){continue}
 if(!o||typeof o!=="object"||o.isSidechain||typeof o.timestamp!=="string")continue;
 const t=Math.floor(Date.parse(o.timestamp)/1000);if(!(t>0))continue;const m=(o.message&&typeof o.message==="object")?o.message:{};
+if(o.type==="assistant"&&o.isApiErrorMessage===true&&o.error==="rate_limit"){const q=o.quotaLimits,z=(q&&typeof q==="object")?q.resetsAt:0;L=(Number.isInteger(z)&&z>0)?z:1;continue}
 if(o.type==="user"){u=t;a=t;if(woke(o,m,idle))h=t}
-else if(o.type==="assistant"&&m.usage&&m.model!=="<synthetic>"){if(u)r=u;a=t;const s=m.stop_reason;if(s)idle=(s!=="tool_use"&&s!=="pause_turn")}}
-if(a)console.log((r||u||a)+" "+h)});
+else if(o.type==="assistant"&&m.usage&&m.model!=="<synthetic>"){if(u)r=u;a=t;L=0;const s=m.stop_reason;if(s)idle=(s!=="tool_use"&&s!=="pause_turn")}}
+if(a)console.log((r||u||a)+" "+h+" "+L)});
 function woke(o,m,idle){if(o.isCompactSummary)return false;const c=m.content;
 if(Array.isArray(c)&&c.some(x=>x&&x.type==="tool_result"))return false;
 if(typeof c!=="string"&&!Array.isArray(c))return false;
@@ -82,15 +85,18 @@ JQ_PROG='def woke($idle): if .isCompactSummary == true then false
     elif (.origin | type) == "object" and .origin.kind == "human" then true
     else $idle end;
   reduce (inputs | fromjson? | select(type == "object" and (.isSidechain | not) and (.timestamp | type) == "string")) as $o
-  ({u: 0, r: 0, h: 0, a: 0, i: true};
+  ({u: 0, r: 0, h: 0, a: 0, i: true, l: 0};
    (($o.timestamp | sub("\\.[0-9]+"; "") | fromdateiso8601?) // 0) as $t
    | if $t == 0 then .
+     elif $o.type == "assistant" and $o.isApiErrorMessage == true and $o.error == "rate_limit"
+       then .l = ((if ($o.quotaLimits | type) == "object" then $o.quotaLimits.resetsAt else null end) as $z
+                  | if ($z | type) == "number" and $z > 0 then ($z | floor) else 1 end)
      elif $o.type == "user" then .i as $i | .u = $t | .a = $t | (if ($o | woke($i)) then .h = $t else . end)
      elif $o.type == "assistant" and ($o.message | type) == "object" and $o.message.usage != null and $o.message.model != "<synthetic>"
-       then (if .u > 0 then .r = .u else . end) | .a = $t
+       then (if .u > 0 then .r = .u else . end) | .a = $t | .l = 0
             | (($o.message.stop_reason // null) as $s | if $s == null then . else .i = ($s != "tool_use" and $s != "pause_turn") end)
      else . end)
-  | if .a > 0 then "\(if .r > 0 then .r elif .u > 0 then .u else .a end) \(.h)" else empty end'
+  | if .a > 0 then "\(if .r > 0 then .r elif .u > 0 then .u else .a end) \(.h) \(.l)" else empty end'
 PY_PROG='import sys, json, datetime
 def woke(o, m, idle):
     if o.get("isCompactSummary"):
@@ -104,7 +110,7 @@ def woke(o, m, idle):
     if isinstance(g, dict) and g.get("kind") == "human":
         return True
     return idle
-u = r = h = a = 0
+u = r = h = a = lim = 0
 idle = True
 for l in sys.stdin.buffer.read().decode("utf-8", "replace").split("\n"):
     try:
@@ -118,6 +124,11 @@ for l in sys.stdin.buffer.read().decode("utf-8", "replace").split("\n"):
     except Exception:
         continue
     m = o.get("message") if isinstance(o.get("message"), dict) else {}
+    if o.get("type") == "assistant" and o.get("isApiErrorMessage") is True and o.get("error") == "rate_limit":
+        q = o.get("quotaLimits")
+        z = q.get("resetsAt") if isinstance(q, dict) else None
+        lim = z if isinstance(z, int) and not isinstance(z, bool) and z > 0 else 1
+        continue
     if o.get("type") == "user":
         u = a = t
         if woke(o, m, idle):
@@ -125,11 +136,12 @@ for l in sys.stdin.buffer.read().decode("utf-8", "replace").split("\n"):
     elif o.get("type") == "assistant" and m.get("usage") and m.get("model") != "<synthetic>":
         r = u or r
         a = t
+        lim = 0
         s = m.get("stop_reason")
         if s:
             idle = s not in ("tool_use", "pause_turn")
 if a:
-    print(r or u or a, h)'
+    print(r or u or a, h, lim)'
 PARSER=""
 if command -v node >/dev/null 2>&1; then PARSER=node
 elif command -v jq >/dev/null 2>&1; then PARSER=jq
@@ -143,8 +155,9 @@ else
 fi
 # Test hook: force one reader (node, jq, a python path) or none (the fallback).
 if [ -n "${CACHE_SAVER_PARSER:-}" ]; then PARSER="$CACHE_SAVER_PARSER"; [ "$PARSER" = none ] && PARSER=""; fi
-# Prints "<request start> <human time> p" when the record was read, or
-# "<modified time> <modified time> f" when it could not be (the fallback).
+# Prints "<request start> <human time> <limit reset or 0> p" when the record was
+# read (the limit field is 1 when the reset time is unknown), or
+# "<modified time> <modified time> 0 f" when it could not be (the fallback).
 times() {
   local out=""
   case "$PARSER" in
@@ -153,7 +166,7 @@ times() {
     ?*) out=$(tail -n 2000 "$1" 2>/dev/null | "$PARSER" -c "$PY_PROG" 2>/dev/null) ;;
   esac
   set -- $out
-  if isnum "$1" && isnum "$2"; then echo "$1 $2 p"; else m=$(mtime "$FILE"); [ -n "$m" ] && echo "$(( m - EARLY )) $m f"; fi
+  if isnum "$1" && isnum "$2"; then l=0; isnum "${3:-}" && l=$3; echo "$1 $2 $l p"; else m=$(mtime "$FILE"); [ -n "$m" ] && echo "$(( m - EARLY )) $m 0 f"; fi
 }
 
 if [ -n "$FIND" ] && [ -z "$FILE" ]; then
@@ -219,12 +232,23 @@ fresh() {  # something woke the chat: start the count again
   if [ "$mode" = p ]; then SEEN=$human; else SEEN=$(date +%s); fi
   save
 }
+# The usage limit: Claude Code records a refused request with the time the
+# limit resets. Until then no nudge can run, so Cache Saver stops instead of
+# counting wake-ups the user never gets.
+limited() { [ "$mode" = p ] && [ "$lim" -gt 0 ] && { [ "$lim" -eq 1 ] || [ "$(date +%s)" -lt "$lim" ]; }; }
+limit_note() {
+  local at=""
+  if [ "$lim" -gt 1 ]; then at=$(date -d "@$lim" '+%a %H:%M' 2>/dev/null || date -r "$lim" '+%a %H:%M' 2>/dev/null); fi
+  if [ -n "$at" ]; then at="it resets $at"; else at="the reset time was not given"; fi
+  echo "CACHE SAVER: the usage limit is reached ($at). Nothing can keep this chat warm until then, so Cache Saver stopped instead of spending wake-ups. Do NOT start it again now. When the chat is used again after the reset, start Cache Saver again and tell the user in one line: Cache Saver paused while the usage limit was reached."
+}
 
 START=$(date +%s)
-read -r req human mode <<EOF
+read -r req human lim mode <<EOF
 $(times "$FILE")
 EOF
 if [ -z "$req" ]; then echo "cache-saver: cannot read the chat's times"; exit 2; fi
+if limited; then limit_note; exit 5; fi
 # No record yet of which wake-ups were counted (first run, or an older counter
 # file): the ones already there are old news, not a new wake-up.
 [ "$mode" = p ] && [ "$SEEN" -eq 0 ] && SEEN=$human
@@ -256,10 +280,11 @@ while true; do
     echo "CACHE SAVER: a newer copy is now watching this chat, so this one stopped. Do nothing and do NOT start it again."
     exit 4
   fi
-  read -r req human mode <<EOF
+  read -r req human lim mode <<EOF
 $(times "$FILE")
 EOF
   if [ -z "$req" ]; then echo "cache-saver: cannot read the chat's times -- stopping"; exit 2; fi
+  if limited; then limit_note; let_go; exit 5; fi
   if user_back "$START"; then fresh; fi  # something woke the chat: the count starts again
   now=$(date +%s)
   [ "$req" -gt "$now" ] && req=$now     # a clock that jumped back

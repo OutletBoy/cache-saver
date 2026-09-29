@@ -57,6 +57,9 @@ Then tell the user in one line that Cache Saver is on, and that they can say "st
   "no chat transcript found": pass the chat file with `--file`. (For the find-me messages, see above.)
 - **Exit 4, `a newer copy is now watching this chat`**: do nothing. Another copy took over; do not
   start it again and do not mention it.
+- **Exit 5, `the usage limit is reached`**: the user's usage limit was hit, so no nudge can run until
+  it resets. Do not start it again now. The next time the chat is used after the reset, start it
+  again and tell the user in one line that Cache Saver paused while the limit was reached.
 
 ## When something wakes the chat after it switched itself off
 
@@ -76,8 +79,8 @@ Do NOT turn it back on when:
 It dies with the chat: closing the chat, terminal, or Claude Code; a computer restart, shutdown,
 crash, or Claude Code update; `/clear` or a new chat (it was watching the old one); and sometimes a
 compaction. It also cannot keep the cache warm while the computer is asleep or offline, while you are
-waiting for the user to approve a command (suggest "always allow" for it), or once the usage limit is
-hit. If the user asks "is Cache Saver on?", check whether its background task is still running and
+waiting for the user to approve a command (suggest "always allow" for it), or while the usage limit is
+hit (it notices the limit, stops with exit 5, and says when it resets). If the user asks "is Cache Saver on?", check whether its background task is still running and
 say so plainly; if it is not, offer to start it. Each wake-up adds about 1,000 tokens to the chat (about
 9,000 over a full 8-hour run): if the user is stepping away with the chat almost full (less than
 about 5% left before auto-compact), suggest running `/compact` first, then start Cache Saver again. Recommend the `CLAUDE.md` block below so it starts

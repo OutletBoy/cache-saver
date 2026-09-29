@@ -13,7 +13,8 @@
 #   -FindMe WORD: watch the chat whose transcript contains WORD (a fresh random word
 #   Claude puts in its own command), so it finds ITS chat even with several running.
 # Exit codes: 0 = nudge (reply and start again), 3 = switched off, 2 = error,
-#             4 = a newer copy took over this chat (do nothing).
+#             4 = a newer copy took over this chat (do nothing),
+#             5 = the usage limit is reached (start it again after the reset).
 param(
   [string]$Minutes = "55",
   [string]$MaxNudges = "9",
@@ -21,7 +22,7 @@ param(
   [string]$FindMe = "",
   [switch]$Help
 )
-if ($Help) { Get-Content -LiteralPath $PSCommandPath -TotalCount 16 | Select-Object -Skip 1 | ForEach-Object { $_ -replace '^# ?', '' }; exit 0 }
+if ($Help) { Get-Content -LiteralPath $PSCommandPath -TotalCount 17 | Select-Object -Skip 1 | ForEach-Object { $_ -replace '^# ?', '' }; exit 0 }
 
 if ($Minutes -notmatch '^\d+$' -or [int]$Minutes -lt 1) { Write-Output "cache-saver: -Minutes must be a whole number, 1 or more"; exit 2 }
 if ($MaxNudges -notmatch '^\d+$') { Write-Output "cache-saver: -MaxNudges must be a whole number (0 = never switch off)"; exit 2 }
@@ -64,9 +65,10 @@ function Get-MTime { Get-Epoch (Get-Item -LiteralPath $File).LastWriteTime }
 #                    again (a loop saves with nobody at the keyboard). Entries in the
 #                    middle of Claude's own work never count; Cache Saver's own
 #                    wake-up is told apart by its time.
-# Side-chats (subagents) and error replies are skipped. Returns
-# @(request start, wake time, "p"), or @(modified time, modified time, "f")
-# when the record cannot be read.
+# Side-chats (subagents) and error replies are skipped; a usage-limit error (Claude
+# Code writes the reset time beside it) is remembered until the next real reply.
+# Returns @(request start, wake time, "p", limit reset or 0 -- 1 when unknown),
+# or @(modified time, modified time, "f", 0) when the record cannot be read.
 function Test-Woke($o, [bool]$idle) {
   if ($o.isCompactSummary -eq $true) { return $false }
   if ($null -eq $o.message) { return $false }
@@ -77,7 +79,7 @@ function Test-Woke($o, [bool]$idle) {
   return $idle
 }
 function Get-Times {
-  $u = [int64]0; $r = [int64]0; $h = [int64]0; $a = [int64]0; $idle = $true
+  $u = [int64]0; $r = [int64]0; $h = [int64]0; $a = [int64]0; $idle = $true; $lim = [int64]0
   # Test hook: CACHE_SAVER_PARSER=none forces the fallback.
   if ($env:CACHE_SAVER_PARSER -ne "none") { try {
     $lines = Get-Content -LiteralPath $File -Tail 2000 -Encoding UTF8 -ErrorAction Stop
@@ -89,10 +91,15 @@ function Get-Times {
         if ($o.timestamp -is [datetime]) { $t = Get-Epoch $o.timestamp }
         else { $t = [datetimeoffset]::Parse([string]$o.timestamp, [cultureinfo]::InvariantCulture).ToUnixTimeSeconds() }
       } catch { continue }
+      if ($o.type -eq "assistant" -and $o.isApiErrorMessage -eq $true -and $o.error -eq "rate_limit") {
+        $z = $null; if ($null -ne $o.quotaLimits) { $z = $o.quotaLimits.resetsAt }
+        if (($z -is [int] -or $z -is [long]) -and $z -gt 0) { $lim = [int64]$z } else { $lim = 1 }
+        continue
+      }
       if ($o.type -eq "user") { $u = $t; $a = $t; if (Test-Woke $o $idle) { $h = $t } }
       elseif ($o.type -eq "assistant" -and $null -ne $o.message -and $null -ne $o.message.usage -and $o.message.model -ne "<synthetic>") {
         if ($u -gt 0) { $r = $u }
-        $a = $t
+        $a = $t; $lim = 0
         $sr = $o.message.stop_reason
         if ($sr) { $idle = ($sr -ne "tool_use" -and $sr -ne "pause_turn") }
       }
@@ -100,11 +107,11 @@ function Get-Times {
   } catch { } }
   if ($a -gt 0) {
     if ($r -eq 0) { if ($u -gt 0) { $r = $u } else { $r = $a } }
-    return @($r, $h, "p")
+    return @($r, $h, "p", $lim)
   }
   $m = Get-MTime
   if ($null -eq $m) { return $null }
-  return @(($m - $script:early), $m, "f")
+  return @(($m - $script:early), $m, "f", 0)
 }
 
 $limit = $Minutes * 60
@@ -153,10 +160,23 @@ function Reset-Fresh($times) {
   if ($times[2] -eq "p") { $script:seen = $times[1] } else { $script:seen = Get-Epoch (Get-Date) }
   Save-State
 }
+# The usage limit (same rule as cache-saver.sh): a refused request is recorded
+# with the time the limit resets; until then no nudge can run.
+function Test-Limited($times) {
+  if ($times[2] -ne "p" -or [int64]$times[3] -le 0) { return $false }
+  if ([int64]$times[3] -eq 1) { return $true }
+  return ((Get-Epoch (Get-Date)) -lt [int64]$times[3])
+}
+function Write-LimitNote($times) {
+  $at = "the reset time was not given"
+  if ([int64]$times[3] -gt 1) { $at = "it resets " + [datetimeoffset]::FromUnixTimeSeconds([int64]$times[3]).LocalDateTime.ToString("ddd HH:mm", [cultureinfo]::InvariantCulture) }
+  Write-Output ("CACHE SAVER: the usage limit is reached ($at). Nothing can keep this chat warm until then, so Cache Saver stopped instead of spending wake-ups. Do NOT start it again now. When the chat is used again after the reset, start Cache Saver again and tell the user in one line: Cache Saver paused while the usage limit was reached.")
+}
 
 $start = Get-Epoch (Get-Date)
 $times = Get-Times
 if ($null -eq $times) { Write-Output "cache-saver: cannot read the chat's times"; exit 2 }
+if (Test-Limited $times) { Write-LimitNote $times; exit 5 }
 # No record yet of which wake-ups were counted (first run, or an older counter
 # file): the ones already there are old news, not a new wake-up.
 if ($times[2] -eq "p" -and $seen -eq 0) { $seen = [int64]$times[1] }
@@ -190,6 +210,7 @@ while ($true) {
   }
   $times = Get-Times
   if ($null -eq $times) { Write-Output "cache-saver: cannot read the chat's times -- stopping"; exit 2 }
+  if (Test-Limited $times) { Write-LimitNote $times; Clear-Live; exit 5 }
   if (Test-UserBack $times $start) { Reset-Fresh $times }   # something woke the chat: the count starts again
   $now = Get-Epoch (Get-Date)
   $last = [math]::Min([int64]$times[0], $now)       # the cache's hour runs from the request's START

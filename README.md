@@ -239,7 +239,7 @@ Cache Saver lives inside your Claude Code chat, so anything that stops the chat 
 | **Your computer goes to sleep** (lid closed, sleep mode) | Nothing can run while it sleeps; if it sleeps past the hour, the cache goes cold anyway (after a short sleep it catches up within a minute) | Keep the computer awake (plugged in, sleep off) during breaks you want covered |
 | **Your internet drops** | The nudge cannot reach Claude, so the cache goes cold | Once you are back online, ask Claude to start it again |
 | **Claude asks you to approve the command** | It cannot restart until you answer | Each start uses a new random word, so allow the script itself: add `Bash(bash ~/.claude/skills/cache-saver/cache-saver.sh:*)` to `permissions.allow` in `~/.claude/settings.json` (or ask Claude to) |
-| **You hit your usage limit** | Claude cannot reply, so it cannot restart it | After your limit resets, start it again (or ask Claude to) |
+| **You hit your usage limit** | Nothing can reach Claude until the limit resets, so the cache goes cold. Cache Saver notices the limit, stops instead of counting wake-ups, and notes when it resets | After your limit resets, start it again (or ask Claude to) |
 | **Claude waits on ONE step for over an hour** (a single very long command, or a helper agent that runs for hours) | Claude cannot send the nudge until that step ends, so the chat's cache can go cold meanwhile (the helper keeps its own cache warm) | Nothing needed for normal work: steps that each finish within an hour are fine. For very long jobs, run them in the background so Claude stays free |
 | **The chat gets compacted** (`/compact`, or automatically when it gets very long) | Compacting can end background tasks. Each wake-up adds about 1,000 tokens to the chat (about 9,000 for a full 8-hour run), so it rarely causes a compaction, but it can tip a chat that is already almost full | If Claude Code shows less than about 5% context left before auto-compact, run `/compact` before you step away. If it compacts anyway, ask Claude to start it again |
 | **You start a new chat or use `/clear`** | It was watching the old chat | Start it again in the new one |
@@ -364,7 +364,7 @@ A nudge a little early costs one tiny reply; a nudge late costs a full re-read, 
 
 Yes. `tests/run-tests.sh` checks the timing and the "are you back?" logic with made-up chat records:
 slow replies, long turns, background jobs, loops, wake-ups mid-work, two copies on one chat, finding
-its own chat, error replies, older Claude Code versions, and the fallback (27 checks per reader; 5 in
+its own chat, error replies, the usage limit, older Claude Code versions, and the fallback (33 checks per reader; 5 in
 the no-reader fallback run). It runs against both scripts and every way they can read the chat
 (`bash tests/run-tests.sh sh [node|jq|py|none]` or `bash tests/run-tests.sh ps1 [json|none]`; needs GNU `date`, as on Linux or Git Bash). Every change is tested automatically on real Linux and macOS.
 

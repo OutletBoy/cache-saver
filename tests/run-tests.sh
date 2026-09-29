@@ -25,6 +25,8 @@ O() { printf '{"parentUuid":null,"isSidechain":false,"type":"user","message":{"r
 N() { printf '{"parentUuid":null,"isSidechain":false,"type":"user","message":{"role":"user","content":"<task-notification>done</task-notification>"},"uuid":"n","timestamp":"%s"}\n' "$(iso "$1")"; }
 A() { printf '{"parentUuid":"u","isSidechain":%s,"message":{"model":"%s","id":"m","type":"message","role":"assistant","content":[{"type":"text","text":"hi"}],"usage":{"input_tokens":1},"stop_reason":"%s"},"requestId":"r","type":"assistant","uuid":"a","timestamp":"%s"}\n' "${2:-false}" "${3:-claude-x}" "${4:-end_turn}" "$(iso "$1")"; }
 X() { printf '{"parentUuid":null,"isSidechain":false,"type":"user","message":{"role":"user","content":"<cross-session-message>next job</cross-session-message>"},"uuid":"x","timestamp":"%s","origin":{"kind":"peer"}}\n' "$(iso "$1")"; }
+# Lm = Claude Code's usage-limit error entry: Lm <time> <reset time or none> [error kind]
+Lm() { local q=""; [ "${2:-none}" != none ] && q="\"quotaLimits\":{\"status\":\"rejected\",\"resetsAt\":$2,\"rateLimitType\":\"seven_day\"},"; printf '{"parentUuid":"u","isSidechain":false,"type":"assistant","uuid":"l","timestamp":"%s","message":{"model":"<synthetic>","role":"assistant","content":[{"type":"text","text":"You have hit your weekly limit"}],"usage":{"input_tokens":0},"stop_reason":"stop_sequence"},%s"error":"%s","isApiErrorMessage":true}\n' "$(iso "$1")" "$q" "${3:-rate_limit}"; }
 M() { printf '{"type":"frame-link","sessionId":"s","timestamp":"%s"}\n' "$(iso "$1")"; }
 run() {  # run <file> <timeout-seconds>; prints "<exit> <elapsed> <last line>"
   local t0=$(date +%s) out rc
@@ -120,6 +122,25 @@ run $f 150 > $W/dup1.out & p1=$!; sleep 5
 run $f 150 > $W/dup2.out & p2=$!
 wait $p1; check DUP-first-copy-steps-aside "$(cat $W/dup1.out)" 4 75 50 "newer copy"
 wait $p2; check DUP-second-copy-keeps-watch "$(cat $W/dup2.out)" 0 75 50 "quiet"
+# LIM1: the usage limit is reached (reset time given) -> stops at once, says when it resets
+n=$(date +%s); f=$W/lim1.jsonl; { H $((n-20)); Lm $((n-19)) $((n+3600)); } > $f
+check LIM1-limit-stops "$(run $f 30)" 5 20 0 "usage limit is reached (it resets"
+# LIM2: no reset time in the entry -> still stops, and says the time is unknown
+n=$(date +%s); f=$W/lim2.jsonl; { H $((n-20)); Lm $((n-19)) none; } > $f
+check LIM2-limit-no-time "$(run $f 30)" 5 20 0 "reset time was not given"
+# LIM3: the reset time has passed -> works normally again
+n=$(date +%s); f=$W/lim3.jsonl; { U $((n-70)); A $((n-65)); H $((n-62)); Lm $((n-61)) $((n-10)); } > $f
+check LIM3-limit-over "$(run $f 30)" 0 20 0 "quiet"
+# LIM4: a real reply after the limit entry means the chat works again
+n=$(date +%s); f=$W/lim4.jsonl; { U $((n-70)); Lm $((n-69)) $((n+3600)); A $((n-65)); } > $f
+check LIM4-reply-clears-limit "$(run $f 30)" 0 20 0 "quiet"
+# LIM5: a different error (a server hiccup) is not the usage limit
+n=$(date +%s); f=$W/lim5.jsonl; { U $((n-70)); A $((n-65)); H $((n-62)); Lm $((n-61)) $((n+3600)) server_error; } > $f
+check LIM5-other-error "$(run $f 30)" 0 20 0 "quiet"
+# LIM6: the limit is hit while it is watching -> stops at the next check instead of nudging
+n=$(date +%s); f=$W/lim6.jsonl; { H $n; A $n; } > $f; rm -f $W/state/lim6.jsonl.state*
+( sleep 5; Lm $(date +%s) $(( $(date +%s) + 3600 )) >> $f ) &
+check LIM6-limit-while-watching "$(run $f 150)" 5 75 50 "usage limit is reached"
 fi
 # G: no readable entries -> falls back to the file's modified time
 f=$W/g.jsonl; echo "not json" > $f; touch -d "@$(( $(date +%s) - 70 ))" $f
