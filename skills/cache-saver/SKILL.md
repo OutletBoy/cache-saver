@@ -53,6 +53,8 @@ Then tell the user in one line that Cache Saver is on, and that they can say "st
   that many quiet hours because staying on would have cost more usage than one fresh restart; their
   next message re-reads the chat once; Cache Saver turns itself back on then.
 - **Exit 3, `still switched off`**: do not start it again until something new wakes this chat.
+- **Exit 2 (an error)**: tell the user the message in plain words and do not loop. A common one is
+  "no chat transcript found": pass the chat file with `--file`. (For the find-me messages, see above.)
 - **Exit 4, `a newer copy is now watching this chat`**: do nothing. Another copy took over; do not
   start it again and do not mention it.
 
@@ -68,8 +70,6 @@ Do NOT turn it back on when:
 - **the user stopped it themselves** ("stop the cache saver"): it stays off until they ask again;
 - the user's message says they are leaving for **more than about 8 hours** (suggest leaving it off);
 - the user says they are **done with this chat**.
-- **Exit 2 (an error)**: tell the user the message in plain words and do not loop. A common one is
-  "no chat transcript found": pass the chat file with `--file`.
 
 ## Things that stop it silently (help the user with these)
 
@@ -112,11 +112,11 @@ requests, and each nudge is two requests, so about 9 nudges. Share of the break'
 | 6 hours | 22% |
 | 8 hours | about 0% (break-even; it switches itself off) |
 | Overnight or longer | costs about one extra restart: turn it off |
-| Normal work day (lunch and a meeting) | about 72% |
+| Normal work day (a 1-hour lunch and a 2-hour meeting) | about 72% |
 
 The first message back is about 18 times cheaper. Bigger chats save more in absolute terms. Anthropic
 does not publish how many tokens one percent of a subscription limit is, so savings are a share of
-what the break would have cost. On the pay-per-token API the same percentages apply to the bill.
+what the break would have cost. On the pay-per-token API with the 1-hour cache, the same percentages apply to the bill.
 
 ## Options
 

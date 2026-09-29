@@ -4,6 +4,9 @@
 # cold restart would. Its LAST LINE tells Claude what to do next.
 #
 # Usage: powershell -ExecutionPolicy Bypass -File cache-saver.ps1 [-Minutes N] [-MaxNudges N] [-FindMe WORD | -File PATH] [-Help]
+#   -Minutes N: quiet minutes before a nudge (default 55; keep it a few below the
+#   cache lifetime).
+#   -File PATH: which chat record to watch (default: the most recently changed).
 #   -MaxNudges N: wake-ups in a row before it switches itself off (default 9: each
 #   nudge is two short requests, so 8 nudges plus the note cost about one cold
 #   restart; 0 = never).
@@ -12,16 +15,17 @@
 # Exit codes: 0 = nudge (reply and start again), 3 = switched off, 2 = error,
 #             4 = a newer copy took over this chat (do nothing).
 param(
-  [int]$Minutes = 55,
-  [int]$MaxNudges = 9,
+  [string]$Minutes = "55",
+  [string]$MaxNudges = "9",
   [string]$File = "",
   [string]$FindMe = "",
   [switch]$Help
 )
-if ($Help) { Get-Content -LiteralPath $PSCommandPath -TotalCount 13 | Select-Object -Skip 1 | ForEach-Object { $_ -replace '^# ?', '' }; exit 0 }
+if ($Help) { Get-Content -LiteralPath $PSCommandPath -TotalCount 16 | Select-Object -Skip 1 | ForEach-Object { $_ -replace '^# ?', '' }; exit 0 }
 
-if ($Minutes -lt 1) { Write-Output "cache-saver: -Minutes must be 1 or more"; exit 2 }
-if ($MaxNudges -lt 0) { Write-Output "cache-saver: -MaxNudges must be 0 or more (0 = never switch off)"; exit 2 }
+if ($Minutes -notmatch '^\d+$' -or [int]$Minutes -lt 1) { Write-Output "cache-saver: -Minutes must be a whole number, 1 or more"; exit 2 }
+if ($MaxNudges -notmatch '^\d+$') { Write-Output "cache-saver: -MaxNudges must be a whole number (0 = never switch off)"; exit 2 }
+$Minutes = [int]$Minutes; $MaxNudges = [int]$MaxNudges
 
 $conf = $env:CLAUDE_CONFIG_DIR
 if (-not $conf) { $conf = Join-Path $HOME ".claude" }
@@ -105,9 +109,8 @@ function Get-Times {
 
 $limit = $Minutes * 60
 if ($env:CACHE_SAVER_TEST_SECONDS -match '^\d+$') { $limit = [int]$env:CACHE_SAVER_TEST_SECONDS }
-# Entries this soon after Cache Saver's own exit are its own wake-up and Claude's
-# reply to it. (In the fallback: changes this long after a start are Claude's
-# own restart.)
+# Fallback only: file changes this soon after a start or a stop are Claude's
+# own restart, not someone waking the chat.
 $grace = 120
 if ($limit -lt 240) { $grace = [int][math]::Floor($limit / 2) }
 # A wake-up this soon after Cache Saver's own exit is its own (the task

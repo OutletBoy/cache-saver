@@ -24,7 +24,11 @@ MINUTES=55
 MAX_NUDGES=9
 FILE=""
 FIND=""
+need() { if [ $# -lt 2 ]; then echo "cache-saver: $1 needs a value (try --help)"; exit 2; fi; }
 while [ $# -gt 0 ]; do
+  case "$1" in
+    --minutes|--max-nudges|--file|--find-me) need "$@" ;;
+  esac
   case "$1" in
     --minutes) MINUTES="$2"; shift 2 ;;
     --max-nudges) MAX_NUDGES="$2"; shift 2 ;;
@@ -174,9 +178,8 @@ if [ ! -f "$FILE" ]; then echo "cache-saver: file not found: $FILE"; exit 2; fi
 LIMIT=$(( MINUTES * 60 ))
 # Test hook: a limit in seconds, so the tests do not wait an hour.
 if isnum "${CACHE_SAVER_TEST_SECONDS:-}"; then LIMIT="$CACHE_SAVER_TEST_SECONDS"; fi
-# Entries this soon after Cache Saver's own exit are its own wake-up and
-# Claude's reply to it, never someone waking the chat. (In the fallback: changes
-# this long after a start are Claude's own restart.)
+# Fallback only: file changes this soon after a start or a stop are Claude's
+# own restart, not someone waking the chat.
 GRACE=120
 if [ "$LIMIT" -lt 240 ]; then GRACE=$(( LIMIT / 2 )); fi
 # A wake-up this soon after Cache Saver's own exit is its own (the task

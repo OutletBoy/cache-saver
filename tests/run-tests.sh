@@ -5,7 +5,13 @@ KIND="$1"; READER="${2:-}"
 D="$(cd "$(dirname "$0")/../skills/cache-saver" && pwd)"
 W=$(mktemp -d)
 export CACHE_SAVER_TEST_SECONDS=60 CACHE_SAVER_STATE_DIR="$W/state"
-case "$READER" in ''|json) unset CACHE_SAVER_PARSER ;; *) export CACHE_SAVER_PARSER="$READER" ;; esac
+case "$READER" in
+  ''|json) unset CACHE_SAVER_PARSER ;;
+  py) pp=""; for p in python3 python py; do c=$(command -v "$p" 2>/dev/null) || continue   # a real Python, as the script picks it
+        case "$c" in *WindowsApps*) continue ;; esac; pp="$c"; break; done
+      export CACHE_SAVER_PARSER="$pp" ;;
+  *) export CACHE_SAVER_PARSER="$READER" ;;
+esac
 mkdir -p "$W/state"
 iso() { date -u -d "@$1" +%Y-%m-%dT%H:%M:%S.123Z; }
 # U = tool result, H = the user's message (marked human), T = background-task wake-up (marked),
@@ -63,16 +69,16 @@ check E-error-reply "$(run $f 30)" 0 20 0 "quiet"
 n=$(date +%s); f=$W/f.jsonl; { U $((n-70)); A $((n-65)); U $((n-3)); } > $f
 check F-interrupt "$(run $f 30)" 0 20 0 "quiet"
 # K: Cache Saver's OWN stop-note wake-up does not turn it back on
-n=$(date +%s); f=$W/k.jsonl; { H $((n-5000)); A $((n-4990)); T $((n-97)); A $((n-95)); } > $f; st k.jsonl "17 $((n-100)) $((n-100)) $((n-100))"
+n=$(date +%s); f=$W/k.jsonl; { H $((n-5000)); A $((n-4990)); T $((n-97)); A $((n-95)); } > $f; st k.jsonl "9 $((n-100)) $((n-100)) $((n-100))"
 check K-own-wakeup-stays-off "$(run $f 30)" 3 20 0 "still switched off"
 # K2: a finished background job later on DOES wake the chat: it turns back on
-n=$(date +%s); f=$W/k2.jsonl; { H $((n-5000)); A $((n-4990)); T $((n-2)); A $((n-1)); } > $f; st k2.jsonl "17 $((n-100)) $((n-100)) $((n-100))"
+n=$(date +%s); f=$W/k2.jsonl; { H $((n-5000)); A $((n-4990)); T $((n-2)); A $((n-1)); } > $f; st k2.jsonl "9 $((n-100)) $((n-100)) $((n-100))"
 check K2-job-wakes-it "$(run $f 8)" 124 12 5 "0 so far"
 # K3: another chat's message (an autonomous loop, nobody at the keyboard) turns it back on
-n=$(date +%s); f=$W/k3.jsonl; { H $((n-5000)); A $((n-4990)); X $((n-2)); A $((n-1)); } > $f; st k3.jsonl "17 $((n-100)) $((n-100)) $((n-100))"
+n=$(date +%s); f=$W/k3.jsonl; { H $((n-5000)); A $((n-4990)); X $((n-2)); A $((n-1)); } > $f; st k3.jsonl "9 $((n-100)) $((n-100)) $((n-100))"
 check K3-loop-wakes-it "$(run $f 8)" 124 12 5 "0 so far"
 # L: the user's own message after the switch-off turns it back on
-n=$(date +%s); f=$W/l.jsonl; { H $((n-5000)); A $((n-4990)); H $((n-2)); A $((n-1)); } > $f; st l.jsonl "17 $((n-100)) $((n-100))"
+n=$(date +%s); f=$W/l.jsonl; { H $((n-5000)); A $((n-4990)); H $((n-2)); A $((n-1)); } > $f; st l.jsonl "9 $((n-100)) $((n-100))"
 check L-user-back "$(run $f 8)" 124 12 5 "0 so far"
 # M: Claude's own tool results (for example a slow nudge reply) do not restart the count
 n=$(date +%s); f=$W/m.jsonl; { H $((n-5000)); A $((n-4990)); U $((n-70)); A $((n-65)); } > $f; st m.jsonl "5 0 $((n-5000))"
@@ -93,7 +99,7 @@ check V-own-nudge-keeps-count "$(run $f 30)" 0 20 0 "wake-up 6 of 9"
 n=$(date +%s); f=$W/w.jsonl; { H $((n-5000)); A $((n-4990)); X $((n-80)); A $((n-75)); } > $f; st w.jsonl "5 0 $((n-5000)) $((n-3000))"
 check W-loop-restarts-count "$(run $f 30)" 0 20 0 "wake-up 1 of 9"
 # S: a counter file from an older version (two numbers) stays switched off
-n=$(date +%s); f=$W/s.jsonl; { H $((n-300)); A $((n-290)); } > $f; st s.jsonl "17 $((n-100))"
+n=$(date +%s); f=$W/s.jsonl; { H $((n-300)); A $((n-290)); } > $f; st s.jsonl "9 $((n-100))"
 check S-old-counter-file "$(run $f 30)" 3 20 0 "still switched off"
 # Y: a wake-up that lands while Claude is still working (not idle) does not restart the count
 n=$(date +%s); f=$W/y.jsonl; { H $((n-5000)); A $((n-4990)); U $((n-90)); A $((n-85)) false claude-x tool_use; T $((n-80)); U $((n-75)); A $((n-70)); } > $f; st y.jsonl "5 0 $((n-5000)) $((n-3000))"
@@ -131,7 +137,7 @@ check H-switch-off "$(run $f 30)" 3 20 0 "switched off at wake-up 9"
 # I: still off when nothing new happened
 check I-stays-off "$(run $f 30)" 3 20 0 "still switched off"
 # J: the user came back (a new message after the switch-off) -> starts fresh and waits
-n=$(date +%s); st h.jsonl "17 $((n-100)) $((n-100))"; H $n >> $f; A $((n+1)) >> $f
+n=$(date +%s); st h.jsonl "9 $((n-100)) $((n-100))"; H $n >> $f; A $((n+1)) >> $f
 check J-user-back "$(run $f 8)" 124 12 5 "0 so far"
 echo "$KIND ${READER:-default}: $pass passed, $fail failed"
 rm -rf "$W"
